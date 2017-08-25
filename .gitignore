@@ -2,7 +2,7 @@ data/*
 datasets/*
 vis/*
 output/*
-temp/*
+temp*
 models/*
 demos/*
 scripts/st_SDK/*
@@ -11,13 +11,15 @@ external/*
 
 *.pyc
 *.json
-*.jpg
 *.h5
 *.pkl
 *.pth
 *.sublime*
 
 
+*.jpg
+*.png
+*.mp4
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

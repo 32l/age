@@ -10,10 +10,9 @@ def imwrite(im, filename):
     cv2.imwrite(filename, im)
     return
 
-def resize(im,  new_shape):
+def resize(im,  new_shape_t):
     ''' im_out = resize(im_in, new_shape = (w, h)) '''
-    
-    new_shape = list(new_shape)
+    new_shape = list(new_shape_t)
     assert(new_shape[0] > 0 or new_shape[1] > 0)
     if new_shape[0] < 0:
         new_shape[0] = int(new_shape[1] / im.shape[0] * im.shape[1])
@@ -152,11 +151,48 @@ def stitch(image_list, axis):
             n += im.shape[0]
     return new_im
 
-def bgr2rgb(im):
-    return cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
-
 def combine_bbox(bbox_list):
     bbox_mat = np.array(bbox_list, dtype = np.float32)
     bbox = np.min(bbox_mat, axis = 0)
     bbox[2:4] = np.max(bbox_mat[:,2:4], axis = 0)
     return bbox.tolist()
+
+
+def align_face(im, key_points):
+    '''
+    Align face image by affine transfromation. The transformation matrix is computed by 
+    three pairs of points
+
+    input:
+        im: input image
+        key_points: [(xi, yi)], list of 21-key-point or 106-key-point
+
+    output:
+        im_out
+    '''
+
+    key_points = np.array(key_points, dtype = np.float32)
+    dst_points = np.array([[70.745, 112.0], [108.237, 112.0], [89.4324, 153.514]], dtype = np.float32)
+    dst_sz = (178, 218)
+
+    src_points = np.zeros((3, 2), dtype = np.float32)
+
+    if key_points.shape[0] == 21:
+        src_points[0] = key_points[16]
+        src_points[1] = key_points[17]
+        src_points[2] = (key_points[19] + key_points[20]) / 2.0
+    elif key_points[0] == 106:
+        src_points[0] = key_points[104]
+        src_points[1] = key_points[105]
+        src_points[2] = (key_points[84] + key_points[90]) / 2.0
+    else:
+        raise Exception('invalid number of face keypoints')
+
+    trans_mat = cv2.getAffineTransform(src_points, dst_points)
+
+    im_out = cv2.warpAffine(im, trans_mat, dsize = dst_sz, borderMode = cv2.BORDER_REPLICATE)
+
+    return im_out
+
+
+
