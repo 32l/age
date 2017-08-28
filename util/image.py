@@ -1,6 +1,7 @@
 from __future__ import division
 import cv2
 import numpy as np
+import io
 
 # basic image processing interface based on openCV
 def imread(filename):
@@ -158,10 +159,15 @@ def combine_bbox(bbox_list):
     return bbox.tolist()
 
 
-def align_face(im, key_points):
+
+# face
+mean_pose_21 = io.load_data('util/mean_pose21_178x218.pkl').astype(np.float32)
+
+
+def align_face_3(im, key_points):
     '''
     Align face image by affine transfromation. The transformation matrix is computed by 
-    three pairs of points
+    3 pairs of points
 
     input:
         im: input image
@@ -193,6 +199,49 @@ def align_face(im, key_points):
     im_out = cv2.warpAffine(im, trans_mat, dsize = dst_sz, borderMode = cv2.BORDER_REPLICATE)
 
     return im_out
+
+
+
+def align_face_21(im, key_points):
+    '''
+    Align face image by affine transfromation. The transformation matrix is computed by 
+    21 pairs of points
+
+    input:
+        im: input image
+        key_points: [(xi, yi)], list of 21-key-point or 106-key-point
+
+    output:
+        im_out
+    '''
+    dst_sz = (178, 218)
+    src_points = np.array(key_points, dtype = np.float32)
+
+    assert src_points.shape[0] == 21, 'invalid number of face keypoints (21)'
+
+    dst_points = mean_pose_21
+
+    X = np.zeros((42, 4), dtype = np.float32)
+    U = np.zeros((42, 1), dtype = np.float32)
+
+    X[0:21, 0:2] = src_points
+    X[0:21, 2] = 1
+    X[21::, 0] = src_points[:, 1]
+    X[21::, 1] = -src_points[:, 0]
+    X[21::, 3] = 1
+
+    U[0:21, 0] = dst_points[:,0]
+    U[21::, 0] = dst_points[:,1]
+
+    M = np.linalg.pinv(X).dot(U).flatten()
+
+    trans_mat = np.array([[M[0], M[1], M[2]],
+                          [-M[1], M[0], M[3]]], dtype = np.float32)
+
+    im_out = cv2.warpAffine(im, trans_mat, dsize = dst_sz, borderMode = cv2.BORDER_REPLICATE)
+
+    return im_out
+
 
 
 

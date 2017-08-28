@@ -61,7 +61,7 @@ def image_detect_face_old():
 
     elif dataset == 'megaage':
         sample_lst_fn = 'datasets/megaAge/Label/megaage.json'
-        img_root = '/data2/ynli/datasets/age/megaAge'
+        img_root = '/data2/ynli/datasets/age/megaAge/Image'
         output_fn = 'output/image_analysis/megaage_detect.json'
     elif dataset == 'fgnet':
         sample_lst_fn = 'datasets/FGnet/Label/fgnet.json'
@@ -225,6 +225,134 @@ def image_analyze_face():
     io.save_str_list(out_str_lst, os.path.join('temp', '%s_pose_distribution.txt' % dataset))
 
 
+def image_detect_face(dataset = 'megaage'):
+    '''
+    Detect face in image dataset
+
+    see video_detect_face for more informaiton
+    '''
+
+    import subprocess
+
+    if dataset == 'imdb_wiki':
+        # for IMDB-WIKI dataset
+        sample_lst_fn = 'datasets/IMDB-WIKI/Annotations/imdb_wiki.json'
+        img_root = '/data2/ynli/datasets/age/IMDB-WIKI/Images'
+        output_fn = 'output/image_analysis/imdb_wiki_detect.pkl'
+
+    elif dataset == 'morph':
+        # for Morph 2 dataset
+        sample_lst_fn = 'datasets/morph/Label/morph.json'
+        img_root = '/data2/ynli/datasets/age/morph/sy'
+        output_fn = 'output/image_analysis/morph_detect.pkl'
+
+    elif dataset == 'megaface_old':
+        # for MegeFace dataset
+
+        sample_lst_fn = 'datasets/megaAge_old/Label/megaface.json'
+        img_root = '/data2/ynli/datasets/age/megaAge_old/MegafaceIdentities_VGG'
+        output_fn = 'output/image_analysis/megaface_old_detect.pkl'
+
+    elif dataset == 'lap2016':
+        # for ChaLearn_LAP_2016 dataset
+
+        sample_lst_fn = 'datasets/LAP_2016/Label/lap.json'
+        img_root = '/data2/ynli/datasets/age/LAP_2016/Image'
+        output_fn = 'output/image_analysis/lap_detect.pkl'
+
+    elif dataset == 'adience':
+        sample_lst_fn = 'datasets/adience/Label/adience.json'
+        img_root = '/data2/ynli/datasets/age/adience/faces'
+        output_fn = 'output/image_analysis/adience_detect.pkl'
+
+    elif dataset == 'megaage':
+        sample_lst_fn = 'datasets/megaAge/Label/megaage.json'
+        img_root = '/data2/ynli/datasets/age/megaAge/Image'
+        output_fn = 'output/image_analysis/megaage_detect.pkl'
+
+    elif dataset == 'fgnet':
+        sample_lst_fn = 'datasets/FGnet/Label/fgnet.json'
+        img_root = '/data2/ynli/datasets/age/FGnet/Images'
+        output_fn = 'output/image_analysis/fgnet_detect.pkl'
+
+    else:
+        print('invalid dataset name "%s"' % dataset)
+        return
+
+
+    sample_lst = io.load_json(sample_lst_fn)
+    rst_dict = io.load_data(output_fn)
+    for s in sample_lst:
+        rst_dict[s['id']]['image'] = s['image']
+
+    io.save_data(rst_dict, output_fn)
+    return
+
+
+    sample_lst = io.load_json(sample_lst_fn)
+    img_lst = [os.path.join(img_root, s['image']) for s in sample_lst]
+
+    for img_fn in img_lst:
+        assert os.path.isfile(img_fn)
+
+    img_lst_fn = os.path.join('temp', '%s_image_lst.txt' % dataset)
+    io.save_str_list(img_lst, img_lst_fn)
+
+    # call SenseTime SDK
+    rst_fn = os.path.join('temp', '%s_image_detect.txt' % dataset)
+
+    if not os.path.isfile(rst_fn):
+        cwd = os.getcwd()
+        sdk_dir = 'scripts/st_SDK/st_face-7.0.0-enterprise_premium-linux-f740862/samples/c++'
+        os.chdir(sdk_dir)
+
+        command_line = [
+            './detect_face.sh',
+            os.path.join(cwd, img_lst_fn),
+            os.path.join(cwd, rst_fn),
+        ]
+
+        print('call SenseTime SDK using:')
+        print(' '.join(command_line))
+
+        subprocess.call(command_line)
+
+        os.chdir(cwd)
+
+    
+    rst_str_lst = io.load_str_list(rst_fn)
+    rst_dict = {}
+
+    for idx, s in enumerate(rst_str_lst):
+        print('loading detection result %d / %d' % (idx, len(rst_str_lst)))
+
+        s = s.split(',')
+        sample = sample_lst[idx]
+
+        assert len(s) == 71 or len(s) == 2
+        assert os.path.basename(s[0]) == os.path.basename(sample['image'])
+
+        if len(s) == 2:
+            r = {
+                'image': sample['image'],
+                'valid': False
+            }
+        else:
+            left, top, right, bottom = [float(v) for v in s[1:5]]
+
+            r = {
+                'image': s[0],
+                'valid': True,
+                'face_loc': [(left+right)/2.0, (top+bottom)/2.0, right-left+1, bottom-top+1],
+                'face_pose': [float(v) for v in s[5:8]],
+                'attribute': [int(v) for v in s[8:19]],
+                'emotion':  [int(v) for v in s[19:29]],
+                'key_points': [(float(x), float(y)) for x, y in zip(s[29::2], s[30::2])]
+            }
+
+        rst_dict[sample['id']] = r
+
+    io.save_data(rst_dict, output_fn)
 
 
 def video_detect_face():
@@ -681,16 +809,79 @@ def video_analyze(dataset = 'all'):
             csv_writer.writerow([att] + corr1[i].tolist())
         csv_writer.writerow([])
 
+
+def image_align_face(dataset = 'megaage', key_point_num = 21):
+    '''
+    use face detect result to align face and crop image to size (178, 218)
+    '''
+
+    assert key_point_num in {3, 21}
+
+    if dataset == 'imdb_wiki':
+        # for IMDB-WIKI dataset
+        img_root = '/data2/ynli/datasets/age/IMDB-WIKI/Images'
+        output_dir = '/data2/ynli/datasets/age/IMDB-WIKI/Images_aligned_%d' % key_point_num
+        rst_dict_fn = 'output/image_analysis/imdb_wiki_detect.pkl'
+
+    elif dataset == 'lap2016':
+        # for ChaLearn_LAP_2016 dataset
+        img_root = '/data2/ynli/datasets/age/LAP_2016/Image'
+        output_dir = '/data2/ynli/datasets/age/LAP_2016/Image_aligned_%d' % key_point_num
+        rst_dict_fn = 'output/image_analysis/lap_detect.pkl'
+
+    elif dataset == 'megaage':
+        img_root = '/data2/ynli/datasets/age/megaAge/Image'
+        output_dir = '/data2/ynli/datasets/age/megaAge/Image_aligned_%d' % key_point_num
+        rst_dict_fn = 'output/image_analysis/megaage_detect.pkl'
+
+    else:
+        print('invalid dataset name "%s"' % dataset)
+        return
+
+
+
+    rst_dict = io.load_data(rst_dict_fn)
+
+    # build directory structure
+    tree = os.walk(img_root)
+    for t in tree:
+        src_dir = t[0]
+        dst_dir = src_dir.replace(img_root, output_dir, 1)
+        print(dst_dir)
+        io.mkdir_if_missing(dst_dir)
+
+    # align and crop image
+    for idx, rst in enumerate(rst_dict.values()):
+        print('aligning image [%s, %d points]: %d / %d' % (dataset, key_point_num, idx, len(rst_dict)))
+        src_fn = os.path.join(img_root, rst['image'])
+        dst_fn = os.path.join(output_dir, rst['image'])
+
+        img = image.imread(src_fn)
+        if rst['valid']:
+            if key_point_num == 3:
+                img = image.align_face_3(img, rst['key_points'])
+            else:
+                img = image.align_face_21(img, rst['key_points'])
+        else:
+            img = image.resize(img, (178, 218))
+
+        image.imwrite(img, dst_fn)
+
+
+
+
+
 if __name__ == '__main__':
 
     ## image
-    # image_detect_face()
+    # image_detect_face(sys.argv[1])
+    image_align_face(sys.argv[1])
 
     ## video()
     # video_detect_face()
     # video_crop_face()
 
-    video_analyze()
+    # video_analyze()
 
 
     ## test
