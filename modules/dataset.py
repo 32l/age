@@ -2,6 +2,7 @@ import util.io as io
 
 import os
 import sys
+import collections
 import numpy as np
 import time
 from PIL import Image
@@ -53,9 +54,9 @@ class StandardFaceTransform(object):
             img.resize((w, h), Image.BILINEAR)
 
         # crop face
-        x1 = int(round((w - crop_size) / 2.0))
-        y1 = int(round((h - crop_size) / 2.0) + y_offset)
-        img = img.crop((x1, y1, x1 + crop_size, y1 + crop_size))
+        x1 = int(round((w - self.crop_size) / 2.0))
+        y1 = int(round((h - self.crop_size) / 2.0) + self.y_offset)
+        img = img.crop((x1, y1, x1 + self.crop_size, y1 + self.crop_size))
 
         # post transform
         img = self.post_transform(img)
@@ -63,23 +64,52 @@ class StandardFaceTransform(object):
         return img
 
 
-def load_dataset(dset_name, subset = 'train'):
+def load_dataset(dset_name, subset = 'train', alignment = 'none', **argv):
 
-    if dset_name == 'imdb_wiki':
+    if dset_name == 'imdb_wiki' or dset_name == 'imdb_wiki_good':
 
-        img_root = './datasets/IMDB-WIKI/Images'
-        sample_lst_fn = './datasets/IMDB-WIKI/Annotations/imdb_wiki_%s.json' % subset
+        if dset_name == 'imdb_wiki':
+            sample_lst_fn = './datasets/IMDB-WIKI/Annotations/imdb_wiki_%s.json' % subset
+        else:
+            sample_lst_fn = './datasets/IMDB-WIKI/Annotations/imdb_wiki_good_%s.json' % subset
+
+        if alignment == '3':
+            img_root = './datasets/IMDB-WIKI/Images_aligned_3'
+        elif alignment == '21':
+            img_root = './datasets/IMDB-WIKI/Images_aligned_21'
+        elif alignment == 'none':
+            img_root = './datasets/IMDB-WIKI/Images'
+        else:
+            raise Exception('Invalid alignment mode %s for %s' % (alignment, dset_name))
 
         if subset == 'train':
             transform = StandardFaceTransform(flip = True)
         else:
             transform = StandardFaceTransform(flip = False)
 
-        return Image_Age_Dataset(img_root = img_root, sample_lst_fn = sample_lst_fn, age_std = False,
-            age_rng = None, transform = transform)
+    elif dset_name == 'megaage':
+
+        sample_lst_fn = './datasets/megaAge/Label/megaage_%s.json' % subset
+
+        if alignment == '3':
+            img_root = './datasets/megaAge/Image_aligned_3'
+        elif alignment == '21':
+            img_root = './datasets/megaAge/Image_aligned_21'
+        elif alignment == 'none':
+            img_root = './datasets/megaAge/Image'
+        else:
+            raise Exception('Invalid alignment mode %s for %s' % (alignment, dset_name))
+
+        if subset == 'train':
+            transform = StandardFaceTransform(flip = True)
+        else:
+            transform = StandardFaceTransform(flip = False)
 
     else:
         raise Exception('Unknown dataset "%s"' % dset_name)
+
+    return Image_Age_Dataset(img_root = img_root, sample_lst_fn = sample_lst_fn, 
+            transform = transform, **argv)
 
 
 class Image_Age_Dataset(data.Dataset):
@@ -87,7 +117,8 @@ class Image_Age_Dataset(data.Dataset):
     Pytorch Wrapper for aging datasets
     '''
 
-    def __init__(self, img_root, sample_lst_fn, age_std = False, age_dist = False, age_rng = None, transform = None):
+    def __init__(self, img_root, sample_lst_fn, age_std = False, age_dist = False, 
+        age_rng = None, transform = None, debug = 0):
         '''
             img_root    : root path of image files
             sample_lst_fn  : a json file containing an image list. Each element should be a dict with keys: "age", "image", "identity", "person_id"
@@ -102,11 +133,12 @@ class Image_Age_Dataset(data.Dataset):
         self.age_dist = age_dist
         self.age_rng = age_rng
         self.transform = transform
+        self.debug = debug
 
         self.sample_lst = io.load_json(sample_lst_fn)
 
         if self.age_rng:
-            self.sample_lst = [s for s in self.sample_lst if s['age'] >= age_rng[0] and s['age'] <= age_rng[1]]
+            self.sample_lst = [s for s in self.sample_lst if s['age'] >= self.age_rng[0] and s['age'] <= self.age_rng[1]]
         
         if self.age_std:
             assert 'std' in self.sample_lst[0], 'fail to load age_std information from %s' % sample_lst_fn
@@ -115,9 +147,19 @@ class Image_Age_Dataset(data.Dataset):
             assert 'dist' in self.sample_lst[0], 'fail to load age_dist informaiton from %s' % sample_lst_fn
 
 
+        # standardize data format
+        # for i in xrange(len(self.sample_lst)):
+        #     self.sample_lst[i]['age'] = float(self.sample_lst[i]['age'])
+
+        self.len = len(self.sample_lst)
+
+        print('[Image_Age_Dataset] Sample: %d   Age Range: %s\n\tSample List: %s\n\tImage Root: %s' %
+            (self.len, self.age_rng, sample_lst_fn, self.img_root))
+
+
     def __len__(self):
 
-        return len(self.sample_lst)
+        return self.len
 
     def __getitem__(self, index):
         '''
@@ -127,13 +169,13 @@ class Image_Age_Dataset(data.Dataset):
             age: float value
             std: float value
         '''
-
-        s = self.sample_lst[index]
+        if self.debug == 1:
+            s = self.sample_lst[0]
+        else:
+            s = self.sample_lst[index]
 
         img = Image.open(os.path.join(self.img_root, s['image'])).convert('RGB')
-
-        if self.transform:
-            img = self.transform(img)
+        img = self.transform(img)
 
         age = s['age']
 
@@ -148,15 +190,4 @@ class Image_Age_Dataset(data.Dataset):
             dist = 0
 
         return img, age, (std, dist)
-
-
-    def set_age_range(self, age_rng):
-
-        assert len(age_rng) == 2
-
-        
-
-        new_len = len(self.sample_lst)
-
-
 
