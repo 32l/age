@@ -146,7 +146,7 @@ class AgeModel(nn.Module):
         if model is None:
             model = self
 
-        state_dict = collections.OrderedDict()
+        state_dict = OrderedDict()
         for p_name, p in model.state_dict().iteritems():
             # remove the prefix "module.", which is added when using dataparaller for multi-gpu training
             p_name = p_name.replace('module.', '')
@@ -227,8 +227,10 @@ def train_model(model, train_opts):
 
     # train_dset.len = test_dset.len = 1
 
-    train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, num_workers = 2)
-    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = train_opts.batch_size, num_workers = 2)
+    train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
+        num_workers = 4, pin_memory = True)
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = train_opts.batch_size, 
+        num_workers = 4, pin_memory = True)
 
 
     # create optimizer
@@ -304,7 +306,7 @@ def train_model(model, train_opts):
 
             # data
             img, age_gt, (age_std, age_dist) = data
-            img = Variable(img)
+            img = Variable(img).cuda()
             age_gt = Variable(age_gt.float()).cuda()
             age_label = age_gt.round().long() - model.opts.min_age
             # age_std = Variable(age_std).cuda(gpu_id)
@@ -364,7 +366,7 @@ def train_model(model, train_opts):
             for batch_idx, data in enumerate(test_loader):
 
                 img, age_gt, (age_std, age_dist) = data
-                img = Variable(img)
+                img = Variable(img).cuda()
                 age_gt = Variable(age_gt.float()).cuda()
                 age_label = age_gt.round().long() - model.opts.min_age
                 # age_std = Variable(age_std).cuda(gpu_id)
