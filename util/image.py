@@ -163,6 +163,10 @@ def combine_bbox(bbox_list):
 # face
 mean_pose_21 = io.load_data('util/mean_pose21_178x218.pkl').astype(np.float32)
 
+# don not use the 19-th point
+map_21_to_19 = [0, 1, 2, 3, 4, 5, 6, 16, 7, 8, 17, 9, 10, 18, 12, 19, 14, 20]
+mean_pose_19 = mean_pose_21[map_21_to_19, :]
+
 
 def align_face_3(im, key_points):
     '''
@@ -242,6 +246,40 @@ def align_face_21(im, key_points):
 
     return im_out
 
+def align_face_19(im, key_points):
+    '''
+    For AFLW
 
+    Align face image by affine transfromation. The transformation matrix is computed by 
+    19 pairs of points
+    '''
+
+    dst_sz = (178, 218)
+    src_points = np.array(key_points, dtype = np.float32)
+    assert src_points.shape[0] == 19, 'invalid number of face keypoints (19)'
+
+    src_points = src_points[0:18, :]
+    dst_points = mean_pose_19
+
+    X = np.zeros((36, 4), dtype = np.float32)
+    U = np.zeros((36, 1), dtype = np.float32)
+
+    X[0:18, 0:2] = src_points
+    X[0:18, 2] = 1
+    X[18::, 0] = src_points[:, 1]
+    X[18::, 1] = -src_points[:, 0]
+    X[18::, 3] = 1
+
+    U[0:18, 0] = dst_points[:,0]
+    U[18::, 0] = dst_points[:,1]
+
+    M = np.linalg.pinv(X).dot(U).flatten()
+
+    trans_mat = np.array([[M[0], M[1], M[2]],
+                          [-M[1], M[0], M[3]]], dtype = np.float32)
+
+    im_out = cv2.warpAffine(im, trans_mat, dsize = dst_sz, borderMode = cv2.BORDER_REPLICATE)
+
+    return im_out    
 
 

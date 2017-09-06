@@ -40,13 +40,6 @@ def image_detect_face_old():
         img_root = '/data2/ynli/datasets/age/morph/sy'
         output_fn = 'output/image_analysis/morph_detect.json'
 
-    elif dataset == 'megaface_old':
-        # for MegeFace dataset
-
-        sample_lst_fn = 'datasets/megaAge_old/Label/megaface.json'
-        img_root = '/data2/ynli/datasets/age/megaAge_old/MegafaceIdentities_VGG'
-        output_fn = 'output/image_analysis/megaface_old_detect.json'
-
     elif dataset == 'lap2016':
         # for ChaLearn_LAP_2016 dataset
 
@@ -59,10 +52,10 @@ def image_detect_face_old():
         img_root = '/data2/ynli/datasets/age/adience/faces'
         output_fn = 'output/image_analysis/adience_detect.json'
 
-    elif dataset == 'megaage':
-        sample_lst_fn = 'datasets/megaAge/Label/megaage.json'
-        img_root = '/data2/ynli/datasets/age/megaAge/Image'
-        output_fn = 'output/image_analysis/megaage_detect.json'
+    elif dataset == 'megaage_old':
+        sample_lst_fn = 'datasets/megaAge_old/Label/megaage.json'
+        img_root = '/data2/ynli/datasets/age/megaAge_old/Image'
+        output_fn = 'output/image_analysis/megaage_old_detect.json'
     elif dataset == 'fgnet':
         sample_lst_fn = 'datasets/FGnet/Label/fgnet.json'
         img_root = '/data2/ynli/datasets/age/FGnet/Images'
@@ -168,9 +161,6 @@ def image_analyze_face():
     # sample_lst = io.load_json('datasets/IMDB-WIKI/Annotations/imdb_wiki.json')
     # rst_lst = io.load_json('datasets/IMDB-WIKI/Annotations/imdb_wiki_detect_face.json')
 
-    # dataset = 'megaface'
-    # sample_lst = io.load_json('datasets/megaFace/Label/megaface.json')
-    # rst_lst = io.load_json('datasets//megaFace/Label/megaface_detect_face.json')
 
     # dataset = 'lap2016'
     # sample_lst = io.load_json('datasets/LAP_2016/Label/lap.json')
@@ -246,13 +236,6 @@ def image_detect_face(dataset = 'megaage'):
         img_root = '/data2/ynli/datasets/age/morph/sy'
         output_fn = 'output/image_analysis/morph_detect.pkl'
 
-    elif dataset == 'megaface_old':
-        # for MegeFace dataset
-
-        sample_lst_fn = 'datasets/megaAge_old/Label/megaface.json'
-        img_root = '/data2/ynli/datasets/age/megaAge_old/MegafaceIdentities_VGG'
-        output_fn = 'output/image_analysis/megaface_old_detect.pkl'
-
     elif dataset == 'lap2016':
         # for ChaLearn_LAP_2016 dataset
 
@@ -265,10 +248,10 @@ def image_detect_face(dataset = 'megaage'):
         img_root = '/data2/ynli/datasets/age/adience/faces'
         output_fn = 'output/image_analysis/adience_detect.pkl'
 
-    elif dataset == 'megaage':
-        sample_lst_fn = 'datasets/megaAge/Label/megaage.json'
-        img_root = '/data2/ynli/datasets/age/megaAge/Image'
-        output_fn = 'output/image_analysis/megaage_detect.pkl'
+    elif dataset == 'megaage_old':
+        sample_lst_fn = 'datasets/megaAge_old/Label/megaage.json'
+        img_root = '/data2/ynli/datasets/age/megaAge_old/Image'
+        output_fn = 'output/image_analysis/megaage_old_detect.pkl'
 
     elif dataset == 'fgnet':
         sample_lst_fn = 'datasets/FGnet/Label/fgnet.json'
@@ -829,10 +812,10 @@ def image_align_face(dataset = 'megaage', key_point_num = 21):
         output_dir = '/data2/ynli/datasets/age/LAP_2016/Image_aligned_%d' % key_point_num
         rst_dict_fn = 'output/image_analysis/lap_detect.pkl'
 
-    elif dataset == 'megaage':
-        img_root = '/data2/ynli/datasets/age/megaAge/Image'
-        output_dir = '/data2/ynli/datasets/age/megaAge/Image_aligned_%d' % key_point_num
-        rst_dict_fn = 'output/image_analysis/megaage_detect.pkl'
+    elif dataset == 'megaage_old':
+        img_root = '/data2/ynli/datasets/age/megaAge_old/Image'
+        output_dir = '/data2/ynli/datasets/age/megaAge_old/Image_aligned_%d' % key_point_num
+        rst_dict_fn = 'output/image_analysis/megaage_old_detect.pkl'
 
     else:
         print('invalid dataset name "%s"' % dataset)

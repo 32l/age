@@ -35,10 +35,11 @@ class Loss_Buffer():
 
 class Ordinal_Hyperplane_Loss(nn.Module):
 
-    def __init__(self, relaxation = 3, ignore_index = -1):
+    def __init__(self, relaxation = 3, ignore_index = -1, sample_normalize = 1):
         super(Ordinal_Hyperplane_Loss, self).__init__()
         self.rlx = relaxation
         self.ignore_index = ignore_index
+        self.sample_normalize = sample_normalize
 
     def forward(self, fc_out, label):
         '''
@@ -62,14 +63,17 @@ class Ordinal_Hyperplane_Loss(nn.Module):
         label_ordinal = Variable(fc_out.data.new(label_ordinal))
 
         # relaxation_mask
-        rlx_mask = np.where(np.abs(label_exp_np - label_grid) <= self.rlx, 0, 1)
+        rlx_mask = np.where(np.abs(label_exp_np - label_grid) < self.rlx, 0, 1)
         rlx_mask = Variable(fc_out.data.new(rlx_mask))
 
         # valid
         valid_mask = label_exp >= 0
 
         # loss
-        loss = ((fc_out - label_ordinal).pow(2) * rlx_mask)[valid_mask].sum() / valid_mask.data.sum()
+        if self.sample_normalize == 1:
+            loss = ((fc_out - label_ordinal).pow(2) * rlx_mask)[valid_mask].sum() / bsz
+        else:
+            loss = ((fc_out - label_ordinal).pow(2) * rlx_mask)[valid_mask].sum() / valid_mask.data.sum()
 
         return loss
 

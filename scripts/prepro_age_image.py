@@ -81,7 +81,6 @@ def create_label_megaface():
     io.save_json(train_lst, os.path.join(root, 'Label', 'megaface_train.json'))
     io.save_json(test_lst, os.path.join(root, 'Label', 'megaface_test.json'))
 
-
 def create_label_morph():
 
     root = 'datasets/morph'
@@ -98,7 +97,6 @@ def create_label_morph():
         full_sample_lst += sample_lst
 
     io.save_json(full_sample_lst, os.path.join(root, 'Label', 'morph.json'))
-
 
 
 def create_label_lap2016():
@@ -218,9 +216,9 @@ def create_label_adience():
 
     io.save_json(sample_lst, os.path.join(root, 'Label', 'adience.json'))
 
-def create_label_megaage():
+def create_label_megaage_old():
 
-    root = 'datasets/megaAge'
+    root = 'datasets/megaAge_old'
 
     sub_lst = {}
 
@@ -249,6 +247,36 @@ def create_label_megaage():
         sub_lst[subset] = sample_lst
         io.save_json(sample_lst, os.path.join(root, 'Label', 'megaage_%s.json' % subset))
 
+
+    sample_lst = sub_lst['train'] + sub_lst['test']
+    io.save_json(sample_lst, os.path.join(root, 'Label', 'megaage.json'))
+
+def create_label_megaage():
+    root = 'datasets/megaAge'
+
+    sub_lst = {}
+    io.mkdir_if_missing(os.path.join(root, 'Label'))
+
+    for subset in {'train', 'test'}:
+        fn_lst = io.load_str_list(os.path.join(root, 'list', '%s_name.txt' % subset))
+        age_lst = io.load_str_list(os.path.join(root, 'list', '%s_age.txt' % subset))
+        dis_lst = io.load_str_list(os.path.join(root, 'list', '%s_dis.txt' % subset), end = ' \n')
+
+        assert len(fn_lst) == len(age_lst) == len(dis_lst)
+
+        sample_lst = []
+        for idx, (fn, age, dis) in enumerate(zip(fn_lst, age_lst, dis_lst)):
+            sample_lst.append({
+                'id': '%s_%d' % (subset, idx),
+                'image': os.path.join(subset, fn),
+                'age': float(age),
+                'gender': -1,
+                'person_id': -1,
+                'dist': [float(v) for v in dis.split(' ')]
+                })
+
+        sub_lst[subset] = sample_lst
+        io.save_json(sample_lst, os.path.join(root, 'Label', 'megaage_%s.json' % subset))
 
     sample_lst = sub_lst['train'] + sub_lst['test']
     io.save_json(sample_lst, os.path.join(root, 'Label', 'megaage.json'))

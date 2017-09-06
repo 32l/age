@@ -64,7 +64,7 @@ class StandardFaceTransform(object):
         return img
 
 
-def load_dataset(dset_name, subset = 'train', alignment = 'none', **argv):
+def load_dataset(dset_name, subset = 'train', alignment = 'none', crop_size = 128, **argv):
 
     if dset_name == 'imdb_wiki' or dset_name == 'imdb_wiki_good':
 
@@ -83,22 +83,27 @@ def load_dataset(dset_name, subset = 'train', alignment = 'none', **argv):
             raise Exception('Invalid alignment mode %s for %s' % (alignment, dset_name))
 
         if subset == 'train':
-            transform = StandardFaceTransform(flip = True)
+            transform = StandardFaceTransform(flip = True, crop_size = crop_size)
         else:
-            transform = StandardFaceTransform(flip = False)
+            transform = StandardFaceTransform(flip = False, crop_size = crop_size)
 
     elif dset_name == 'megaage':
 
         sample_lst_fn = './datasets/megaAge/Label/megaage_%s.json' % subset
 
-        if alignment == '3':
-            img_root = './datasets/megaAge/Image_aligned_3'
-        elif alignment == '21':
-            img_root = './datasets/megaAge/Image_aligned_21'
-        elif alignment == 'none':
-            img_root = './datasets/megaAge/Image'
+        if alignment == '21':
+            img_root = './datasets/megaAge/'
         else:
             raise Exception('Invalid alignment mode %s for %s' % (alignment, dset_name))
+
+        if subset == 'train':
+            transform = StandardFaceTransform(flip = True)
+        else:
+            transform = StandardFaceTransform(flip = False)
+
+    elif dset_name == 'morph':
+        sample_lst_fn = './datasets/morph/Label/morph_%s.json' % subset
+        img_root = './datasets/morph/sy'
 
         if subset == 'train':
             transform = StandardFaceTransform(flip = True)

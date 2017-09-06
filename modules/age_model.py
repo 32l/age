@@ -57,7 +57,7 @@ class AgeModel(nn.Module):
         ## set model opts
 
         if fn:
-            opts = torch.load(fn)['opts']
+            opts = torch.load(fn, map_location=lambda storage, loc: storage)['opts']
         
         self.opts = opts
 
@@ -115,12 +115,14 @@ class AgeModel(nn.Module):
 
         # init weights
         if fn:
-            model_info = torch.load(fn)
+            print('[AgeModel.init] loading weights from %s' % fn)
+            model_info = torch.load(fn, map_location=lambda storage, loc: storage)
             self.cnn.load_state_dict(model_info['cnn_state_dict'])
             self.cls.load_state_dict(model_info['cls_state_dict'])
         else:
             if fn_cnn:
-                model_info = torch.load(fn)
+                print('[AgeModel.init] loading CNN weights from %s' % fn_cnn)
+                model_info = torch.load(fn_cnn, map_location=lambda storage, loc: storage)
                 self.cnn.load_state_dict(model_info['cnn_state_dict'])
             self._init_weight(self.cls)
 
@@ -150,7 +152,7 @@ class AgeModel(nn.Module):
         for p_name, p in model.state_dict().iteritems():
             # remove the prefix "module.", which is added when using dataparaller for multi-gpu training
             p_name = p_name.replace('module.', '')
-            state_dict[p_name] = p
+            state_dict[p_name] = p.cpu()
 
         return state_dict
 
@@ -195,14 +197,13 @@ class AgeModel(nn.Module):
         elif self.opts.cls_type == 'oh':
             # Ordinal Hyperplane
             fc_out = F.sigmoid(fc_out)
-            age_out = fc_out.sum(dim = 1)
+            age_out = fc_out.sum(dim = 1) + self.opts.min_age
 
         elif self.opts.cls_type == 'reg':
             # Regression
             age_out = fc_out.view(-1)
-
-        # age offset
-        age_out = age_out + self.opts.min_age
+            age_out = age_out + self.opts.min_age
+       
 
         return age_out, fc_out
 
@@ -221,9 +222,9 @@ def train_model(model, train_opts):
 
     # create data loader
     train_dset = dataset.load_dataset(dset_name = train_opts.dataset, subset = 'train', debug = train_opts.debug,
-        alignment = train_opts.face_alignment, age_rng = [model.opts.min_age, model.opts.max_age])
+        alignment = train_opts.face_alignment, age_rng = [model.opts.min_age, model.opts.max_age], crop_size = train_opts.crop_size)
     test_dset  = dataset.load_dataset(dset_name = train_opts.dataset, subset = 'test', debug = train_opts.debug,
-        alignment = train_opts.face_alignment, age_rng = [model.opts.min_age, model.opts.max_age])
+        alignment = train_opts.face_alignment, age_rng = [model.opts.min_age, model.opts.max_age], crop_size = train_opts.crop_size)
 
     # train_dset.len = test_dset.len = 1
 
@@ -299,6 +300,7 @@ def train_model(model, train_opts):
         lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay))
         optimizer.param_groups[0]['lr'] = lr
         optimizer.param_groups[1]['lr'] = lr * train_opts.cls_lr_multiplier
+        # lr = optimizer.param_groups[0]['lr']
 
         # train one epoch
         for batch_idx, data in enumerate(train_loader):
@@ -413,14 +415,15 @@ def test_model(model, test_opts):
     print('[AgeModel.test] test options: %s' % test_opts)
 
     # move model to GPU and set to eval mode.
-    gpu_id = test_opts.gpu_id
-    model.cuda(gpu_id)
+    if torch.cuda.device_count() > 1:
+        model.cnn = nn.DataParallel(model.cnn)
+    model.cuda()
     model.eval()
 
     # create dataloader
     test_dset = dataset.load_dataset(dset_name = test_opts.dataset, subset = test_opts.subset,
-        alignment = test_opts.face_alignment, age_rng = [model.opts.min_age, model.opts.max_age])
-    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = test_opts.batch_size, num_workers = 2)
+        alignment = test_opts.face_alignment, age_rng = [model.opts.min_age, model.opts.max_age], crop_size = test_opts.crop_size)
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = test_opts.batch_size, num_workers = 4)
 
     crit_acc = misc.Cumulative_Accuracy()
 
@@ -450,8 +453,8 @@ def test_model(model, test_opts):
     for batch_idx, data in enumerate(test_loader):
 
         img, age_gt, (age_std, age_dist) = data
-        img = Variable(img, volatile = True).cuda(gpu_id)
-        age_gt = Variable(age_gt.float()).cuda(gpu_id)
+        img = Variable(img, volatile = True).cuda()
+        age_gt = Variable(age_gt.float()).cuda()
         
         num_val = (age_gt != -1).data.sum()
 
@@ -526,7 +529,7 @@ if __name__ == '__main__':
 
     elif command == 'test':
         test_opts = opt_parser.parse_opts_test()
-        print(test_opts)
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in test_opts.gpu_id])
 
         if test_opts.id.endswith('.pth'):
             fn = test_opts.id

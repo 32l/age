@@ -63,12 +63,17 @@ def parse_opts_train():
 
     # data
     parser.add_argument('--dataset', type = str, default = 'imdb_wiki',
-        choices = ['imdb_wiki', 'imdb_wiki_good', 'megaage'],
-        help = 'dataset name [imdb_wiki|imdb_wiki_good|megaage]')
+        choices = ['imdb_wiki', 'imdb_wiki_good', 'megaage', 'morph'],
+        help = 'dataset name [imdb_wiki|imdb_wiki_good|megaage|morph]')
 
     parser.add_argument('--face_alignment', type = str, default = '21',
         choices = ['3', '21', 'none'],
         help = 'face alignment mode. see prepro_general for more information')
+
+    parser.add_argument('--crop_size', type = int, default = 128,
+        help = 'center crop size')
+
+    # parser.add_argument()
 
 
     # optimization
@@ -123,12 +128,15 @@ def parse_opts_train():
     parser.add_argument('--cls_lr_multiplier', type = float, default = 10,
         help = 'learning rate multiplier of the classifier layers')
 
+    parser.add_argument('--loss_sample_normalize', type = int, default = 1,
+        help = 'for oh loss, 1 means averaging loss over samples, 0 means averaging loss over channels')
+
 
     # finetune
     parser.add_argument('--pre_id', type = str, default = [], nargs = '*',
         help = 'the list of pretrained model IDs (or model files if end with ".pth")')
 
-    parser.add_argument('--only_load_cnn', type = int, default = 0, choices = [0, 1],
+    parser.add_argument('--only_load_cnn', type = int, default = 1, choices = [0, 1],
         help = '0-load pretrained weights for all layers, 1-load pretrained weights only for CNN')
 
 
@@ -143,7 +151,7 @@ def parse_opts_test():
     parser.add_argument('--id', type = str, default = None,
         help = 'model id or model file if end with .pth')
 
-    parser.add_argument('--gpu_id', type = int, default = 0,
+    parser.add_argument('--gpu_id', type = int, default = [0], nargs = '*',
         help = 'GPU device id used for model training')
 
     parser.add_argument('--output_rst', type = int, default = 0, choices = [0, 1],
@@ -152,8 +160,8 @@ def parse_opts_test():
 
     # data
     parser.add_argument('--dataset', type = str, default = 'imdb_wiki',
-        choices = ['imdb_wiki', 'imdb_wiki_good', 'megaage'],
-        help = 'dataset name [imdb_wiki|imdb_wiki_good|megaage]')
+        choices = ['imdb_wiki', 'imdb_wiki_good', 'megaage', 'morph'],
+        help = 'dataset name [imdb_wiki|imdb_wiki_good|megaage|morph]')
 
     parser.add_argument('--subset', type = str, default = 'test',
         choices = ['train', 'test', 'val'],
@@ -165,6 +173,9 @@ def parse_opts_test():
 
     parser.add_argument('--batch_size', type = int, default = 512,
         help = 'batch size')
+
+    parser.add_argument('--crop_size', type = int, default = 128,
+        help = 'center crop size')
 
     opts = parser.parse_known_args()[0]
     return opts
