@@ -14,6 +14,53 @@ def parse_command():
 
     return command
 
+def parse_opts_pose_model():
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--cnn', type = str, default = 'resnet18', choices = ['resnet18', 'resnet50', 'vgg16'],
+        help = 'cnn network')
+
+    parser.add_argument('--num_fc', type = int, default = 1, choices = [0, 1],
+        help = 'number of fc layers in classifier')
+
+    parser.add_argument('--fc_sizes', type = int, default = [256],
+        help = 'size of intermediate fc layers')
+
+    parser.add_argument('--pose_dim', type = int, default = 1, choices = [1, 2],
+        help = '1-only yaw; 2-yaw and pitch')
+
+    parser.add_argument('--dropout', type = float, default = 0,
+        help = 'dropout rate')
+
+    opts = parser.parse_known_args()[0]
+    return opts
+
+
+def parse_opts_attribute_model():
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument('--cnn', type = str, default = 'resnet18', choices = ['resnet18', 'resnet50', 'vgg16'],
+        help = 'cnn network')
+
+    parser.add_argument('--num_fc', type = int, default = 1, choices = [0, 1],
+        help = 'number of fc layers in classifier')
+
+    parser.add_argument('--fc_sizes', type = int, default = [256],
+        help = 'size of intermediate fc layers')
+
+    parser.add_argument('--num_attr', type = int, default = 40,
+        help = 'number of attributes, 40 for celebA')
+
+    parser.add_argument('--attr_name_fn', type = str, default = 'datasets/CelebA/Label/attr_name_lst.txt',
+        help = 'attribute name list file')
+
+    parser.add_argument('--dropout', type = float, default = 0,
+        help = 'dropout rate')
+
+    opts = parser.parse_known_args()[0]
+    return opts
 
 def parse_opts_age_model():
 
@@ -25,13 +72,13 @@ def parse_opts_age_model():
     parser.add_argument('--min_age', type = int, default = 0,
         help = 'min age')
 
-    parser.add_argument('--max_age', type = int, default = 100,
+    parser.add_argument('--max_age', type = int, default = 70,
         help = 'max age')
 
     parser.add_argument('--num_fc', type = int, default = 1, choices = [1, 2],
         help = 'number of fc layers in classifier')
 
-    parser.add_argument('--fc_sizes', type = int, default = [128],
+    parser.add_argument('--fc_sizes', type = int, default = [256],
         help = 'size of intermediate fc layers')
 
     parser.add_argument('--cls_type', type = str, default = 'oh', choices = ['oh', 'dex'],
@@ -62,7 +109,7 @@ def parse_opts_train():
     
 
     # data
-    parser.add_argument('--dataset', type = str, default = 'imdb_wiki',
+    parser.add_argument('--dataset', type = str, default = 'megaage',
         choices = ['imdb_wiki', 'imdb_wiki_good', 'megaage', 'morph'],
         help = 'dataset name [imdb_wiki|imdb_wiki_good|megaage|morph]')
 
@@ -73,15 +120,16 @@ def parse_opts_train():
     parser.add_argument('--crop_size', type = int, default = 128,
         help = 'center crop size')
 
-    # parser.add_argument()
-
-
+    
     # optimization
     parser.add_argument('--max_epochs', type = int, default = 30,
         help = 'number of training epochs')
 
     parser.add_argument('--batch_size', type = int, default = 128,
         help = 'batch size')
+
+    parser.add_argument('--clip_grad', type = float, default = -1,
+        help = 'clip gradient by L2 norm')
 
     parser.add_argument('--optim', type = str, default = 'sgd',
         choices = ['sgd', 'adam'])
@@ -133,7 +181,7 @@ def parse_opts_train():
 
 
     # finetune
-    parser.add_argument('--pre_id', type = str, default = [], nargs = '*',
+    parser.add_argument('--pre_id', type = str, default = ['models/age_pre_2.2/9.pth'], nargs = '*',
         help = 'the list of pretrained model IDs (or model files if end with ".pth")')
 
     parser.add_argument('--only_load_cnn', type = int, default = 1, choices = [0, 1],

@@ -29,4 +29,3 @@ def test_imdb_wiki_model():
         num_batch = int(np.ceil(len(sample_lst) / batch_size))
 
     
-

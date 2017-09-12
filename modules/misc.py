@@ -144,4 +144,104 @@ class Cumulative_Accuracy():
         else:
             return np.abs(self.err_buffer).mean()
 
+class MeanAP():
+    '''
+    compute meanAP
+    '''
 
+    def __init__(self):
+        self.clear()
+
+    def clear(self):
+        self.score = None
+        self.label = None
+
+    def add(self, new_score, new_label):
+
+        inputs = [new_score, new_label]
+
+        for i in range(len(inputs)):
+
+            if isinstance(inputs[i], list):
+                inputs[i] = np.array(inputs[i], dtype = np.float32)
+
+            elif isinstance(inputs[i], np.ndarray):
+                inputs[i] = inputs[i].astype(np.float32)
+
+            elif isinstance(inputs[i], torch.tensor._TensorBase):
+                inputs[i] = inputs[i].numpy().astype(np.float32)
+
+            elif isinstance(inputs[i], Variable):
+                inputs[i] = inputs[i].data.cpu().numpy().astype(np.float32)
+
+        new_score, new_label = inputs
+        assert new_score.shape == new_label.shape, 'shape mismatch: %s vs. %s' % (new_score.shape, new_label.shape)
+
+        self.score = np.concatenate((self.score, new_score), axis = 0) if self.score is not None else new_score
+        self.label = np.concatenate((self.label, new_label), axis = 0) if self.label is not None else new_label
+
+
+    def compute_mean_ap(self):
+
+        score, label = self.score, self.label
+
+        assert score is not None and label is not None
+        assert score.shape == label.shape, 'shape mismatch: %s vs. %s' % (score.shape, label.shape)
+        assert(score.ndim == 2)
+        M, N = score.shape[0], score.shape[1]
+
+        # compute tp: column n in tp is the n-th class label in descending order of the sample score.
+        index = np.argsort(score, axis = 0)[::-1, :]
+        tp = label.copy().astype(np.float)
+        for i in xrange(N):
+            tp[:, i] = tp[index[:,i], i]
+        tp = tp.cumsum(axis = 0)
+
+        m_grid, n_grid = np.meshgrid(range(M), range(N), indexing = 'ij')
+        tp_add_fp = m_grid + 1    
+        num_truths = np.sum(label, axis = 0)
+        # compute recall and precise
+        rec = tp / num_truths
+        prec = tp / tp_add_fp
+
+        prec = np.append(np.zeros((1,N), dtype = np.float), prec, axis = 0)
+        for i in xrange(M-1, -1, -1):
+            prec[i, :] = np.max(prec[i:i+2, :], axis = 0)
+        rec_1 = np.append(np.zeros((1,N), dtype = np.float), rec, axis = 0)
+        rec_2 = np.append(rec, np.ones((1,N), dtype = np.float), axis = 0)
+        AP = np.sum(prec * (rec_2 - rec_1), axis = 0)
+        AP[np.isnan(AP)] = -1 # avoid error caused by classes that have no positive sample
+
+        assert((AP <= 1).all())
+
+        AP = AP * 100.
+        meanAP = AP[AP != -1].mean()
+
+        return meanAP, AP
+
+    def compute_mean_ap_pn(self):
+        '''
+        compute the average of true-positive-rate and true-negative-rate
+        '''
+
+        score, label = self.score, self.label
+
+        assert score is not None and label is not None
+        assert score.shape == label.shape, 'shape mismatch: %s vs. %s' % (score.shape, label.shape)
+        assert(score.ndim == 2)
+
+        # compute true-positive and true-negative
+        tp = np.where(np.logical_and(score > 0.5, label == 1), 1, 0)
+        tn = np.where(np.logical_and(score < 0.5, label == 0), 1, 0)
+
+        # compute average precise
+        p_pos = tp.sum(axis = 0) / (label == 1).sum(axis = 0)
+        p_neg = tn.sum(axis = 0) / (label == 0).sum(axis = 0)
+
+        ave_p = (p_pos + p_neg) / 2
+
+        ave_p = ave_p * 100.
+        ave_ave_p = ave_p.mean()
+
+        return ave_ave_p, ave_p
+            
