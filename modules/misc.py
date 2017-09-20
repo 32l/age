@@ -7,6 +7,31 @@ from torch.autograd import Variable
 from PIL import Image, ImageOps
 import numpy as np
 
+
+class Smooth_Loss():
+    '''
+    wrapper of pytorch loss layer.
+    '''
+
+    def __init__(self, crit):
+        self.crit = crit
+        self.clear()
+
+    def __call__(self, out, gt):
+        loss = self.crit(out, gt)
+        self.buffer.append(loss.data[0])
+        self.weight_buffer.append(out.size(0))
+
+        return loss
+
+    def clear(self):
+        self.buffer = []
+        self.weight_buffer = []
+
+    def smooth_loss(self):
+        return sum([l * w for l, w in zip(self.buffer, self.weight_buffer)]) / sum(self.weight_buffer)
+
+
 class Loss_Buffer():
     '''
     average loss
@@ -31,7 +56,6 @@ class Loss_Buffer():
         output = sum([l * w for l, w in zip(self.buffer, self.weight_buffer)]) / sum(self.weight_buffer)
         
         return output
-
 
 class Ordinal_Hyperplane_Loss(nn.Module):
 
@@ -77,8 +101,6 @@ class Ordinal_Hyperplane_Loss(nn.Module):
 
         return loss
 
-
-
 class Mean_Absolute_Error():
     '''
     compute mean absolute error
@@ -95,7 +117,6 @@ class Mean_Absolute_Error():
 
         return mae
 
-
 class Cumulative_Accuracy():
     '''
     compute cumulative accuracy
@@ -107,10 +128,11 @@ class Cumulative_Accuracy():
     def clear(self):
 
         self.err_buffer = np.array([])
+        self.std_buffer = np.array([])
         
-    def add(self, age_out, age_gt):
+    def add(self, age_out, age_gt, age_std = None):
 
-        inputs = [age_out, age_gt]
+        inputs = [age_out, age_gt, age_std]
 
         for i in range(len(inputs)):
 
@@ -126,23 +148,35 @@ class Cumulative_Accuracy():
             elif isinstance(inputs[i], Variable):
                 inputs[i] = inputs[i].data.cpu().numpy().astype(np.float32).flatten()
 
-        age_out, age_gt = inputs
+        age_out, age_gt, age_std = inputs
         assert age_out.size == age_gt.size
         self.err_buffer = np.concatenate((self.err_buffer, age_out - age_gt))
+
+        if age_std is not None:
+            self.std_buffer = np.concatenate((self.std_buffer, age_std))
 
     def ca(self, k = 10):
 
         if self.err_buffer.size == 0:
-            return np.nan
+            raise Exception('buffer empty')
         else:
-            return (np.abs(self.err_buffer) < k).sum() / self.err_buffer.size * 100.
+            return (np.abs(self.err_buffer).round() <= k).sum() / self.err_buffer.size * 100.
 
     def mae(self):
 
         if self.err_buffer.size == 0:
-            return np.nan
+            raise Exception('buffer empty')
         else:
             return np.abs(self.err_buffer).mean()
+
+    def lap_err(self):
+
+        if self.err_buffer.size == 0:
+            raise Exception('buffer empty')
+        elif self.std_buffer.size == 0:
+            return -1
+        else:
+            return (1.-np.exp(-np.power(self.err_buffer/self.std_buffer, 2)/2)).mean()
 
 class MeanAP():
     '''
@@ -245,3 +279,42 @@ class MeanAP():
 
         return ave_ave_p, ave_p
             
+
+class Pose_MAE():
+
+    def __init__(self, pose_dim):
+        self.pose_dim = pose_dim
+        self.clear()
+
+    def clear(self):
+        self.err_buffer = None
+
+    def add(self, pose_out, pose_gt):
+        inputs = [pose_out, pose_gt]
+
+        for i in range(len(inputs)):
+
+            if isinstance(inputs[i], list):
+                inputs[i] = np.array(inputs[i], dtype = np.float32)
+
+            elif isinstance(inputs[i], np.ndarray):
+                inputs[i] = inputs[i].astype(np.float32)
+
+            elif isinstance(inputs[i], torch.tensor._TensorBase):
+                inputs[i] = inputs[i].numpy().astype(np.float32)
+
+            elif isinstance(inputs[i], Variable):
+                inputs[i] = inputs[i].data.cpu().numpy().astype(np.float32)
+
+        pose_out, pose_gt = inputs
+        assert pose_out.size == pose_gt.size
+
+        if self.err_buffer is None:
+            self.err_buffer = pose_out - pose_gt
+        else:
+            self.err_buffer = np.concatenate((self.err_buffer, pose_out - pose_gt))
+
+    def mae(self):
+        assert self.err_buffer is not None
+        return np.abs(self.err_buffer).mean(axis = 0) / np.pi * 180.
+

@@ -126,6 +126,16 @@ def prepare_label():
                     position = [x - w/2.0, y - h/2.0, x + w/2.0, y + h/2.0],
                     color = 'g')
 
+                crop_w = w * 1.5
+                crop_h = h * 1.5
+
+                img = image.crop(img, bbox = [x - crop_w/2.0, y - crop_h/2.0, x + crop_w/2.0, y + crop_h/2.0])
+
+                if crop_w > crop_h and crop_w > 200:
+                    img = image.resize(img, (200, -1))
+                elif crop_h > crop_w and crop_h > 200:
+                    img = image.resize(img, (-1, 200))
+
                 image.imwrite(img, dst_fn)
 
 

@@ -9,10 +9,64 @@ def parse_command():
     parser.add_argument('command', type = str, default = 'help',
         choices = ['train', 'test', 'finetune', 'help'], help = 'valid commands: train, test, help')
 
-
     command = parser.parse_known_args()[0].command
 
     return command
+
+def parse_opts_joint_model():
+    parser = argparse.ArgumentParser()
+
+    # common
+    parser.add_argument('--cnn', type = str, default = 'resnet18', choices = ['resnet18', 'resnet50', 'vgg16'],
+        help = 'cnn network')
+
+    parser.add_argument('--feat_size', type = int, default = 256,
+        help = 'feature size of embedding space')
+
+    parser.add_argument('--num_cls_layer', type = int, default = 2, choices = [1,2],
+        help = 'number of fc layers in classifiers (inlcuding age, pose and attribute)')
+
+    parser.add_argument('--cls_mid_size', type = int, default = 256, 
+        help = 'middle fc layer output size of classifiers')
+
+    parser.add_argument('--dropout', type = float, default = 0,
+        help = 'dropout rate')
+
+    # age
+    parser.add_argument('--min_age', type = int, default = 0,
+        help = 'min age')
+
+    parser.add_argument('--max_age', type = int, default = 100,
+        help = 'max age')
+
+    parser.add_argument('--cls_type', type = str, default = 'oh', choices = ['oh', 'dex'],
+        help = 'oh: ordinal hyperplane; dex: deep expectation')
+
+    parser.add_argument('--oh_relaxation', type = int, default = 3,
+        help = 'relaxation parameter of ordinal hyperplane loss')
+
+    
+    # pose
+    parser.add_argument('--pose_cls', type = int, default = 1, choices = [0, 1],
+        help = 'whether has pose classifier [0-no | 1-yes]')
+
+    parser.add_argument('--pose_dim', type = int, default = 1, choices = [1, 2],
+        help = 'number of pose axes [1-only yaw | 2-yaw and pitch]')
+
+
+    # attribute
+    parser.add_argument('--attr_cls', type = int, default = 1, choices = [0, 1],
+        help = 'whether has attribute classifier [0-no | 1-yes]')
+
+    parser.add_argument('--num_attr', type = int, default = 40,
+        help = 'number of attributes, 40 for celebA')
+
+    parser.add_argument('--attr_name_fn', type = str, default = 'datasets/CelebA/Label/attr_name_lst.txt',
+        help = 'attribute name list file')
+
+
+    opts = parser.parse_known_args()[0]
+    return opts
 
 def parse_opts_pose_model():
 
@@ -87,7 +141,7 @@ def parse_opts_age_model():
     parser.add_argument('--oh_relaxation', type = int, default = 3,
         help = 'relaxation parameter of ordinal hyperplane loss')
 
-    parser.add_argument('--dropout', type = float, default = 0.5,
+    parser.add_argument('--dropout', type = float, default = 0,
         help = 'dropout rate')
 
     opts = parser.parse_known_args()[0]
@@ -109,9 +163,9 @@ def parse_opts_train():
     
 
     # data
-    parser.add_argument('--dataset', type = str, default = 'megaage',
-        choices = ['imdb_wiki', 'imdb_wiki_good', 'megaage', 'morph'],
-        help = 'dataset name [imdb_wiki|imdb_wiki_good|megaage|morph]')
+    parser.add_argument('--dataset', type = str, default = 'imdb_wiki_good',
+        choices = ['imdb_wiki', 'imdb_wiki_good', 'megaage', 'morph', 'lap'],
+        help = 'dataset name [imdb_wiki|imdb_wiki_good|megaage|morph|lap]')
 
     parser.add_argument('--face_alignment', type = str, default = '21',
         choices = ['3', '21', 'none'],
@@ -187,6 +241,30 @@ def parse_opts_train():
     parser.add_argument('--only_load_cnn', type = int, default = 1, choices = [0, 1],
         help = '0-load pretrained weights for all layers, 1-load pretrained weights only for CNN')
 
+    # joint training
+    parser.add_argument('--train_cnn', type = int, default = 1, choices = [0, 1],
+        help = 'whether optimize cnn parameters')
+
+    parser.add_argument('--train_embed', type = int, default = 1, choices = [0, 1],
+        help = 'whether optimize feature embedding layer parameters')
+
+    parser.add_argument('--train_pose', type = int, default = 0, choices = [0, 1],
+        help = 'whether optimize pose classifier parameters [0-no | 1-yes]')
+
+    parser.add_argument('--train_attr', type = int, default = 0, choices = [0, 1],
+        help = 'whether optimize attribute classifier parameters [0-no | 1-yes]')
+
+    parser.add_argument('--loss_weight_age', type = float, default = 1,
+        help = 'age loss weight')
+
+    parser.add_argument('--loss_weight_pose', type = float, default = 1,
+        help = 'pose loss weight')
+
+    parser.add_argument('--loss_weight_attr', type = float, default = 1,
+        help = 'attribute loss weight')
+
+    parser.add_argument('--age_cls_multiplier', type = float, default = 10,
+        help = 'learning rate multiplier of the age classifier layers')
 
     opts = parser.parse_known_args()[0]
     return opts

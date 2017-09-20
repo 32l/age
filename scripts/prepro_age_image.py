@@ -304,6 +304,21 @@ def create_label_fgnet():
     io.save_json(sample_lst, os.path.join(root, 'Label', 'fgnet.json'))
 
 
+def visualize():
+
+    sample_lst = io.load_json('datasets/megaAge/Label/megaage_test.json')
+    img_root = 'datasets/megaAge'
+    output_dir = 'vis/megaAge'
+    io.mkdir_if_missing(output_dir)
+    num = 100
+
+    for i, s in enumerate(sample_lst[0:num]):
+        img = image.imread(os.path.join(img_root, s['image']))
+        img = image.draw_text(img, str(s['age']), (30,30), 'b', 0.6)
+        image.imwrite(img, os.path.join(output_dir, '%d.jpg'%i))
+
+
+
 
 
 
@@ -315,5 +330,7 @@ if __name__ == '__main__':
     # create_label_morph()
     # create_label_lap2016()
     # create_label_adience()
-    create_label_megaage()
+    # create_label_megaage()
     # create_label_fgnet()
+
+    visualize()

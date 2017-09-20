@@ -8,6 +8,8 @@ import modules.misc as misc
 
 def test_imdb_wiki_model():
 
+    # not finished
+
     sample_lst_fn = 'datasets/IMDB-WIKI/Annotations/imdb_wiki_good_test.json'
     img_root = 'datasets/IMDB-WIKI/Images'
     batch_size = 128
@@ -23,9 +25,6 @@ def test_imdb_wiki_model():
     caffe.set_mode_gpu()
     model = caffemodel(fn_model, fn_weight, caffe.TEST)
 
-    sample_lst = io.load_json(sample_lst_fn)
 
-    if num_batch == 0:
-        num_batch = int(np.ceil(len(sample_lst) / batch_size))
 
     

@@ -115,18 +115,20 @@ class PoseModel(nn.Module):
             self.cnn.load_state_dict(model_info['cnn_state_dict'])
             self.feat_embed.load_state_dict(model_info['feat_embed_state_dict'])
             self.reg.load_state_dict(model_info['reg_state_dict'])
+        elif fn_cnn:
+            print('[PoseModel.init] loading CNN weights from %s' % fn_cnn)
+            model_info = torch.load(fn_cnn, map_location=lambda storage, loc: storage)
+            self.cnn.load_state_dict(model_info['cnn_state_dict'])
+
+            if self.feat_embed is not None:
+                if model_info['feat_embed_state_dict'] is not None:
+                    self.feat_embed.load_state_dict(model_info['feat_embed_state_dict'])
+                else:
+                    self._init_weight(self.feat_embed)
+            self._init_weight(self.reg)
         else:
-            if fn_cnn:
-                print('[PoseModel.init] loading CNN weights from %s' % fn_cnn)
-                model_info = torch.load(fn_cnn, map_location=lambda storage, loc: storage)
-                self.cnn.load_state_dict(model_info['cnn_state_dict'])
-
-                if self.feat_embed is not None:
-                    if model_info['feat_embed_state_dict'] is not None:
-                        self.feat_embed.load_state_dict(model_info['feat_embed_state_dict'])
-                    else:
-                        self._init_weight(self.feat_embed)
-
+            print('[PoseModel.init] Random initialize parameters')
+            self._init_weight(self.feat_embed)
             self._init_weight(self.reg)
 
 
@@ -135,15 +137,17 @@ class PoseModel(nn.Module):
         if model is None:
             model = self
 
-        init_range = 0.08
-
         for layer in model.modules():
             for p_name, p in layer._parameters.iteritems():
                 if p is not None:
                     if p_name == 'weight':
-                        p.data.uniform_(-init_range, init_range)
+                        nn.init.xavier_normal(p.data)
+                        # nn.init.kaiming_uniform(p.data)
+                        # nn.init.normal(p.data, 0, 0.001)
+                        # nn.init.uniform(p.data, -0.08, 0.08)
+                        # pass
                     elif p_name == 'bias':
-                        p.data.fill_(0.0)
+                        nn.init.constant(p.data, 0)
 
     
     def _get_state_dict(self, model = None):
@@ -208,7 +212,6 @@ def train_model(model, train_opts):
     # create data loader
     train_dset = dataset.load_pose_dataset(dset_name = 'aflw', subset = 'train', alignment = train_opts.face_alignment,
         debug = train_opts.debug, crop_size = train_opts.crop_size)
-    
     test_dset = dataset.load_pose_dataset(dset_name = 'aflw', subset = 'test', alignment = train_opts.face_alignment,
         debug = train_opts.debug, crop_size = train_opts.crop_size)
 
@@ -313,7 +316,7 @@ def train_model(model, train_opts):
 
             for i in range(model.opts.pose_dim):
                 l = crit(output[:, i:i+1], pose[:, i:i+1])
-                mae = crit_mae(output[:, i:i+1], pose[:, i:i+1]) / np.pi * 180
+                mae = crit_mae(output[:, i:i+1], pose[:, i:i+1])
 
                 loss = loss + l
 
@@ -404,7 +407,7 @@ def train_model(model, train_opts):
 
                 for i in range(model.opts.pose_dim):
                     l = crit(output[:, i:i+1], pose[:, i:i+1])
-                    mae = crit_mae(output[:, i:i+1], pose[:, i:i+1]) / np.pi * 180
+                    mae = crit_mae(output[:, i:i+1], pose[:, i:i+1])
 
                     loss = loss + l
 
@@ -517,7 +520,7 @@ def test_model(model, test_opts):
 
         for i in range(model.opts.pose_dim):
             l = crit(output[:, i:i+1], pose[:, i:i+1])
-            mae = crit_mae(output[:, i:i+1], pose[:, i:i+1]) / np.pi * 180
+            mae = crit_mae(output[:, i:i+1], pose[:, i:i+1])
 
             loss = loss + l
 
@@ -563,7 +566,7 @@ if __name__ == '__main__':
         train_opts = opt_parser.parse_opts_train()
         os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in train_opts.gpu_id])
 
-        assert len(train_opts.pre_id) > 0, 'train_opts.pre_id not setted'
+        assert len(train_opts.pre_id) > 0, 'train_opts.pre_id not set'
 
         if not train_opts.pre_id[0].endswith('.pth'):
             # convert model_id to model_file

@@ -12,6 +12,120 @@ from torchvision import transforms
 
 
 ## helper function ##
+def load_age_dataset(dset_name, subset = 'train', alignment = 'none', crop_size = 128, **argv):
+
+    if dset_name == 'imdb_wiki' or dset_name == 'imdb_wiki_good':
+
+        if dset_name == 'imdb_wiki':
+            sample_lst_fn = './datasets/IMDB-WIKI/Annotations/imdb_wiki_%s.json' % subset
+        else:
+            sample_lst_fn = './datasets/IMDB-WIKI/Annotations/imdb_wiki_good_%s.json' % subset
+
+        if alignment == '3':
+            img_root = './datasets/IMDB-WIKI/Images_aligned_3'
+        elif alignment == '21':
+            img_root = './datasets/IMDB-WIKI/Images_aligned_21'
+        elif alignment == 'none':
+            img_root = './datasets/IMDB-WIKI/Images'
+        else:
+            raise Exception('Invalid alignment mode %s for %s' % (alignment, dset_name))
+
+        if subset == 'train':
+            transform = StandardFaceTransform(flip = True, crop_size = crop_size)
+        else:
+            transform = StandardFaceTransform(flip = False, crop_size = crop_size)
+
+    elif dset_name == 'megaage':
+
+        sample_lst_fn = './datasets/megaAge/Label/megaage_%s.json' % subset
+
+        if alignment == '21':
+            img_root = './datasets/megaAge/'
+        else:
+            raise Exception('Invalid alignment mode %s for %s' % (alignment, dset_name))
+
+        if subset == 'train':
+            transform = StandardFaceTransform(flip = True, crop_size = crop_size)
+        else:
+            transform = StandardFaceTransform(flip = False, crop_size = crop_size)
+
+    elif dset_name == 'morph':
+        sample_lst_fn = './datasets/morph/Label/morph_%s.json' % subset
+        img_root = './datasets/morph/sy'
+
+        if subset == 'train':
+            transform = StandardFaceTransform(flip = True, crop_size = crop_size)
+        else:
+            transform = StandardFaceTransform(flip = False, crop_size = crop_size)
+
+    elif dset_name == 'lap':
+
+        argv['age_std'] = True
+        
+        if subset == 'train':
+            sample_lst_fn = './datasets/LAP_2016/Label/lap_trainval.json'
+            transform = StandardFaceTransform(flip = True, crop_size = crop_size)
+        elif subset == 'test':
+            sample_lst_fn = './datasets/LAP_2016/Label/lap_test.json'
+            transform = StandardFaceTransform(flip = False, crop_size = crop_size)
+
+        if alignment == '3':
+            img_root = './datasets/LAP_2016/Image_aligned_3'
+        elif alignment == '21':
+            img_root = './datasets/LAP_2016/Image_aligned_21'
+        elif alignment == 'none':
+            img_root = './datasets/LAP_2016/Image'
+        else:
+            raise Exception('Invalid alignment mode %s for %s' % (alignment, dset_name))
+
+    else:
+        raise Exception('Unknown dataset "%s"' % dset_name)
+
+
+    return Image_Age_Dataset(img_root = img_root, sample_lst_fn = sample_lst_fn, 
+            transform = transform, **argv)
+
+
+def load_pose_dataset(dset_name, subset = 'train', alignment = 'none', crop_size = 128, debug = 0):
+
+    if dset_name == 'aflw':
+        sample_lst_fn = './datasets/AFLW/Label/aflw_%s.json' % subset
+        if alignment == 'none':
+            img_root = './datasets/AFLW/flickr'
+        else:
+            img_root = './datasets/AFLW/Image_aligned'
+
+        if subset == 'train':
+            flip = True
+        else:
+            flip = False
+
+        transform = StandardFaceTransform(flip = False, crop_size = crop_size)
+
+    else:
+        raise Exception('Unknown dataset "%s"' % dset_name)
+
+    return Pose_Dataset(img_root = img_root, sample_lst_fn = sample_lst_fn, 
+        transform = transform, flip = flip, debug = debug)
+
+def load_attribute_dataset(dset_name, subset = 'train', alignment = 'none', crop_size = 128, debug = 0):
+    if dset_name == 'celeba':
+        sample_lst_fn = './datasets/CelebA/Label/celeba_%s.json' % subset
+        img_root = './datasets/CelebA/Image_aligned'
+        attr_name_fn = './datasets/CelebA/Label/attr_name_lst.txt'
+
+        if subset == 'train':
+            transform = StandardFaceTransform(flip = True, crop_size = crop_size)
+        else:
+            transform = StandardFaceTransform(flip = False, crop_size = crop_size)
+
+    else:
+        raise Exception('Unknwon dataset %s'%dset_name)
+
+    return Attribute_Dataset(img_root = img_root, sample_lst_fn = sample_lst_fn, attr_name_fn = attr_name_fn,
+        transform = transform, debug = debug)
+
+
 
 class StandardFaceTransform(object):
     '''
@@ -64,97 +178,6 @@ class StandardFaceTransform(object):
         return img
 
 
-def load_age_dataset(dset_name, subset = 'train', alignment = 'none', crop_size = 128, **argv):
-
-    if dset_name == 'imdb_wiki' or dset_name == 'imdb_wiki_good':
-
-        if dset_name == 'imdb_wiki':
-            sample_lst_fn = './datasets/IMDB-WIKI/Annotations/imdb_wiki_%s.json' % subset
-        else:
-            sample_lst_fn = './datasets/IMDB-WIKI/Annotations/imdb_wiki_good_%s.json' % subset
-
-        if alignment == '3':
-            img_root = './datasets/IMDB-WIKI/Images_aligned_3'
-        elif alignment == '21':
-            img_root = './datasets/IMDB-WIKI/Images_aligned_21'
-        elif alignment == 'none':
-            img_root = './datasets/IMDB-WIKI/Images'
-        else:
-            raise Exception('Invalid alignment mode %s for %s' % (alignment, dset_name))
-
-        if subset == 'train':
-            transform = StandardFaceTransform(flip = True, crop_size = crop_size)
-        else:
-            transform = StandardFaceTransform(flip = False, crop_size = crop_size)
-
-    elif dset_name == 'megaage':
-
-        sample_lst_fn = './datasets/megaAge/Label/megaage_%s.json' % subset
-
-        if alignment == '21':
-            img_root = './datasets/megaAge/'
-        else:
-            raise Exception('Invalid alignment mode %s for %s' % (alignment, dset_name))
-
-        if subset == 'train':
-            transform = StandardFaceTransform(flip = True, crop_size = crop_size)
-        else:
-            transform = StandardFaceTransform(flip = False, crop_size = crop_size)
-
-    elif dset_name == 'morph':
-        sample_lst_fn = './datasets/morph/Label/morph_%s.json' % subset
-        img_root = './datasets/morph/sy'
-
-        if subset == 'train':
-            transform = StandardFaceTransform(flip = True, crop_size = crop_size)
-        else:
-            transform = StandardFaceTransform(flip = False, crop_size = crop_size)
-
-    else:
-        raise Exception('Unknown dataset "%s"' % dset_name)
-
-    return Image_Age_Dataset(img_root = img_root, sample_lst_fn = sample_lst_fn, 
-            transform = transform, **argv)
-
-
-def load_pose_dataset(dset_name, subset = 'train', alignment = 'none', crop_size = 128, debug = 0):
-
-    if dset_name == 'aflw':
-        sample_lst_fn = './datasets/AFLW/Label/aflw_%s.json' % subset
-        if alignment == 'none':
-            img_root = './datasets/AFLW/flickr'
-        else:
-            img_root = './datasets/AFLW/Image_aligned'
-
-        if subset == 'train':
-            flip = True
-        else:
-            flip = False
-
-        transform = StandardFaceTransform(flip = False, crop_size = crop_size)
-
-    else:
-        raise Exception('Unknown dataset "%s"' % dset_name)
-
-    return Pose_Dataset(img_root = img_root, sample_lst_fn = sample_lst_fn, 
-        transform = transform, flip = flip, debug = debug)
-
-def load_attribute_dataset(dset_name, subset = 'train', alignment = 'none', crop_size = 128, debug = 0):
-    if dset_name == 'celeba':
-        sample_lst_fn = './datasets/CelebA/Label/celeba_%s.json' % subset
-        img_root = './datasets/CelebA/Image_aligned'
-        attr_name_fn = './datasets/CelebA/Label/attr_name_lst.txt'
-
-        if subset == 'train':
-            transform = StandardFaceTransform(flip = True, crop_size = crop_size)
-        else:
-            transform = StandardFaceTransform(flip = False, crop_size = crop_size)
-
-    else:
-        raise Exception('Unknwon dataset %s'%dset_name)
-
-    return Attribute_Dataset(img_root = img_root, sample_lst_fn = sample_lst_fn, attr_name_fn = attr_name_fn,
-        transform = transform, debug = debug)
 
 class Image_Age_Dataset(data.Dataset):
     '''

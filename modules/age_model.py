@@ -132,15 +132,17 @@ class AgeModel(nn.Module):
         if model is None:
             model = self
 
-        init_range = 0.08
-
         for layer in model.modules():
             for p_name, p in layer._parameters.iteritems():
                 if p is not None:
                     if p_name == 'weight':
-                        p.data.uniform_(-init_range, init_range)
+                        # nn.init.kaiming_uniform(p.data)
+                        nn.init.xavier_normal(p.data)
+                        # nn.init.normal(p.data, 0, 0.001)
+                        # nn.init.uniform(p.data, -0.08, 0.08)
+                        # pass
                     elif p_name == 'bias':
-                        p.data.fill_(0.0)
+                        nn.init.constant(p.data, 0)
 
     
     def _get_state_dict(self, model = None):
@@ -231,6 +233,12 @@ def train_model(model, train_opts):
     test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = train_opts.batch_size, 
         num_workers = 4, pin_memory = True)
 
+    # special dataset
+    if train_opts.dataset in {'lap'}:
+        use_age_std = True
+    else:
+        use_age_std = False
+
 
     # create optimizer
     if train_opts.optim == 'sgd':
@@ -255,7 +263,8 @@ def train_model(model, train_opts):
     elif model.opts.cls_type == 'reg':
         crit = nn.MSELoss()
 
-    crit_mae = misc.Mean_Absolute_Error(ignore_index = -1)
+    crit = misc.Smooth_Loss(crit)
+    meas = misc.Cumulative_Accuracy()
 
 
     # define output information
@@ -283,9 +292,7 @@ def train_model(model, train_opts):
     if train_opts.average_loss < 0:
         train_opts.average_loss = train_opts.display_interval
 
-    loss_buffer = misc.Loss_Buffer(train_opts.average_loss)
-    mae_buffer = misc.Loss_Buffer(train_opts.average_loss)
-
+    
     # main training loop
     epoch = 0
 
@@ -298,7 +305,7 @@ def train_model(model, train_opts):
         lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay))
         optimizer.param_groups[0]['lr'] = lr
         optimizer.param_groups[1]['lr'] = lr * train_opts.cls_lr_multiplier
-        # lr = optimizer.param_groups[0]['lr']
+        
 
         # train one epoch
         for batch_idx, data in enumerate(train_loader):
@@ -309,15 +316,15 @@ def train_model(model, train_opts):
             img = Variable(img).cuda()
             age_gt = Variable(age_gt.float()).cuda()
             age_label = age_gt.round().long() - model.opts.min_age
-            # age_std = Variable(age_std).cuda(gpu_id)
-            # age_dist = Variable(age_dist).cuda(gpu_id)
-            num_val = (age_gt != -1).data.sum()
-
+            
             # forward and backward
             age_out, fc_out = model(img)
 
             loss = crit(fc_out, age_label)
-            mae = crit_mae(age_out, age_gt)
+            if use_age_std:
+                meas.add(age_out, age_gt, age_std)
+            else:
+                meas.add(age_out, age_gt)
 
             loss.backward()
 
@@ -331,10 +338,13 @@ def train_model(model, train_opts):
             optimizer.step()
 
             # display
-            loss_smooth = loss_buffer(loss.data[0], num_val)
-            mae_smooth = mae_buffer(mae, num_val)
 
             if batch_idx % train_opts.display_interval == 0:
+                loss_smooth = crit.smooth_loss()
+                mae_smooth = meas.mae()
+
+                crit.clear()
+                meas.clear()
 
                 log = '[%s] [%s] Train Epoch %d [%d/%d (%.2f%%)]   LR: %.3e   Loss: %.6f   Mae: %.2f' %\
                         (time.ctime(), train_opts.id, epoch, batch_idx * train_loader.batch_size,
@@ -361,29 +371,31 @@ def train_model(model, train_opts):
             # set test model
             model.eval()
 
+            # clean buffer
+            crit.clear()
+            meas.clear()
+
             # set test iteration
             test_iter = train_opts.test_iter if train_opts.test_iter > 0 else len(test_loader)
-
-            # test buffers
-            test_loss_buffer = misc.Loss_Buffer(test_iter)
-            crit_acc = misc.Cumulative_Accuracy()
+            
 
             # test
             for batch_idx, data in enumerate(test_loader):
 
                 img, age_gt, (age_std, age_dist) = data
+
                 img = Variable(img).cuda()
                 age_gt = Variable(age_gt.float()).cuda()
                 age_label = age_gt.round().long() - model.opts.min_age
-                # age_std = Variable(age_std).cuda(gpu_id)
-                # age_dist = Variable(age_dist).cuda(gpu_id)
-                num_val = (age_gt != -1).data.sum()
-
+                
                 # forward
                 age_out, fc_out = model(img)
                 loss = crit(fc_out, age_label)
-                ave_loss = test_loss_buffer(loss.data[0], num_val)
-                crit_acc.add(age_out, age_gt)
+                
+                if use_age_std:
+                    meas.add(age_out, age_gt, age_std)
+                else:
+                    meas.add(age_out, age_gt)
 
                 print('\rTesting %d/%d (%.2f%%)' % (batch_idx, test_iter, 100.*batch_idx/test_iter), end = '')
                 sys.stdout.flush()
@@ -392,9 +404,11 @@ def train_model(model, train_opts):
                     break
 
             # display
-            ave_mae = crit_acc.mae()
-            log = '[%s] [%s] Test Epoch %d   Loss: %.6f   Mae: %.2f  CA(3): %.2f CA(5): %.2f CA(10): %.2f' % \
-                    (time.ctime(), train_opts.id, epoch, ave_loss, ave_mae, crit_acc.ca(3), crit_acc.ca(5), crit_acc.ca(10))
+            loss = crit.smooth_loss()
+            mae = meas.mae()
+
+            log = '[%s] [%s] Test Epoch %d   Loss: %.6f   Mae: %.2f  CA(3): %.2f CA(5): %.2f CA(10): %.2f LAP: %.4f' % \
+                    (time.ctime(), train_opts.id, epoch, loss, mae, meas.ca(3), meas.ca(5), meas.ca(10), meas.lap_err())
 
             print('\n' + log)
             print(log, file = fout)
@@ -402,8 +416,11 @@ def train_model(model, train_opts):
             info['test_history'].append({
                     'iteration': epoch * len(train_loader),
                     'epoch': epoch, 
-                    'loss': ave_loss, 
-                    'mae': ave_mae})
+                    'loss': loss, 
+                    'mae': mae})
+            
+            crit.clear()
+            meas.clear()
 
         # snapshot
         if train_opts.snapshot_interval > 0 and epoch % train_opts.snapshot_interval == 0:
@@ -513,7 +530,7 @@ if __name__ == '__main__':
         train_opts = opt_parser.parse_opts_train()
         os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in train_opts.gpu_id])
 
-        assert len(train_opts.pre_id) > 0, 'train_opts.pre_id not setted'
+        assert len(train_opts.pre_id) > 0, 'train_opts.pre_id not set'
 
         if not train_opts.pre_id[0].endswith('.pth'):
             # convert model_id to model_file
