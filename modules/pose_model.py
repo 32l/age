@@ -132,7 +132,7 @@ class PoseModel(nn.Module):
             self._init_weight(self.reg)
 
 
-    def _init_weight(self, model = None):
+    def _init_weight(self, model = None, mode = 'normal'):
 
         if model is None:
             model = self
@@ -141,11 +141,16 @@ class PoseModel(nn.Module):
             for p_name, p in layer._parameters.iteritems():
                 if p is not None:
                     if p_name == 'weight':
-                        nn.init.xavier_normal(p.data)
+                        # nn.init.xavier_normal(p.data)
                         # nn.init.kaiming_uniform(p.data)
                         # nn.init.normal(p.data, 0, 0.001)
                         # nn.init.uniform(p.data, -0.08, 0.08)
                         # pass
+
+                        if mode == 'xavier':
+                            nn.init.xavier_normal(p.data)
+                        elif mode == 'normal':
+                            nn.init.normal(p.data, 0, 0.001)
                     elif p_name == 'bias':
                         nn.init.constant(p.data, 0)
 
@@ -192,6 +197,9 @@ class PoseModel(nn.Module):
         else:
             feat = self.feat_embed(cnn_feat)
         pose = self.reg(feat)
+
+        if self.opts.output_norm == 1:
+            pose = F.tanh(pose) * np.pi
 
         return pose
 
@@ -316,7 +324,7 @@ def train_model(model, train_opts):
 
             for i in range(model.opts.pose_dim):
                 l = crit(output[:, i:i+1], pose[:, i:i+1])
-                mae = crit_mae(output[:, i:i+1], pose[:, i:i+1])
+                mae = crit_mae(output[:, i:i+1], pose[:, i:i+1]) / np.pi* 180.
 
                 loss = loss + l
 
@@ -407,7 +415,7 @@ def train_model(model, train_opts):
 
                 for i in range(model.opts.pose_dim):
                     l = crit(output[:, i:i+1], pose[:, i:i+1])
-                    mae = crit_mae(output[:, i:i+1], pose[:, i:i+1])
+                    mae = crit_mae(output[:, i:i+1], pose[:, i:i+1]) / np.pi * 180.
 
                     loss = loss + l
 

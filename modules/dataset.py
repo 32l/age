@@ -85,7 +85,6 @@ def load_age_dataset(dset_name, subset = 'train', alignment = 'none', crop_size 
     return Image_Age_Dataset(img_root = img_root, sample_lst_fn = sample_lst_fn, 
             transform = transform, **argv)
 
-
 def load_pose_dataset(dset_name, subset = 'train', alignment = 'none', crop_size = 128, debug = 0):
 
     if dset_name == 'aflw':
@@ -113,6 +112,15 @@ def load_attribute_dataset(dset_name, subset = 'train', alignment = 'none', crop
         sample_lst_fn = './datasets/CelebA/Label/celeba_%s.json' % subset
         img_root = './datasets/CelebA/Image_aligned'
         attr_name_fn = './datasets/CelebA/Label/attr_name_lst.txt'
+
+        if subset == 'train':
+            transform = StandardFaceTransform(flip = True, crop_size = crop_size)
+        else:
+            transform = StandardFaceTransform(flip = False, crop_size = crop_size)
+    elif dset_name == 'celeba_selc1':
+        sample_lst_fn = './datasets/CelebA/Label/celeba_selc1_%s.json' % subset
+        img_root = './datasets/CelebA/Image_aligned'
+        attr_name_fn = './datasets/CelebA/Label/attr_name_selc1_lst.txt'
 
         if subset == 'train':
             transform = StandardFaceTransform(flip = True, crop_size = crop_size)

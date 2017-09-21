@@ -52,10 +52,33 @@ def create_label():
     io.save_json([s for s in sample_lst if s['id'].startswith('test')], os.path.join(root, 'Label', 'celeba_test.json'))
 
 
+def create_label_with_selected_attribute():
+
+    selected_attr_idx = [
+        15, # eyeglasses
+        18, # heavy makeup
+        21, # mouth slilghtly open
+        31, # smiling
+        35, # wear hat
+        36, # wear lipstick
+    ]
+
+
+    for subset in {'train', 'test'}:
+        sample_lst = io.load_json('datasets/CelebA/Label/celeba_%s.json' % subset)
+        for i in xrange(len(sample_lst)):
+            sample_lst[i]['attr'] = [sample_lst[i]['attr'][k] for k in selected_attr_idx]
+
+        io.save_json(sample_lst, 'datasets/CelebA/Label/celeba_selc1_%s.json' % subset)
+
+    attr_name_lst = io.load_str_list('datasets/CelebA/Label/attr_name_lst.txt')
+    attr_name_lst = [attr_name_lst[k] for k in selected_attr_idx]
+    io.save_str_list(attr_name_lst, 'datasets/CelebA/Label/attr_name_selc1_lst.txt')
 
 
 if __name__ == '__main__':
 
     # align_image()
-    create_label()
+    # create_label()
+    create_label_with_selected_attribute()
 

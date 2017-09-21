@@ -279,7 +279,6 @@ class MeanAP():
 
         return ave_ave_p, ave_p
             
-
 class Pose_MAE():
 
     def __init__(self, pose_dim):

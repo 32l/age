@@ -215,9 +215,9 @@ def train_model(model, train_opts):
     model.cuda()
 
     # create data loader
-    train_dset = dataset.load_attribute_dataset(dset_name = 'celeba', subset = 'train', alignment = train_opts.face_alignment,
+    train_dset = dataset.load_attribute_dataset(dset_name = train_opts.attr_dataset, subset = 'train', alignment = train_opts.face_alignment,
         debug = train_opts.debug, crop_size = train_opts.crop_size)
-    test_dset = dataset.load_attribute_dataset(dset_name = 'celeba', subset = 'test', alignment = train_opts.face_alignment,
+    test_dset = dataset.load_attribute_dataset(dset_name = train_opts.attr_dataset, subset = 'test', alignment = train_opts.face_alignment,
         debug = train_opts.debug, crop_size = train_opts.crop_size)
 
     train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 

@@ -52,7 +52,7 @@ class PaviClient(object):
         else:
             if response.status_code == 200:
                 self.instance_id = response.text
-                print('pavi service connected, instance_id: '.format(
+                print('pavi service connected, instance_id: {}'.format(
                     self.instance_id))
                 self.log_queue = Queue()
                 self.log_thread = Thread(target=self.post_log, args=(3, 3, 3))
@@ -75,6 +75,8 @@ class PaviClient(object):
                 'outputs': outputs,
                 'msg': ''
             }
+
+            # print(logs)
             self.log_queue.put(logs)
 
     def post_log(self, max_retry, queue_timeout, req_timeout):
@@ -99,8 +101,8 @@ class PaviClient(object):
                         if status_code == 200:
                             break
                         else:
-                            print('unexpected status code: %d, err msg: %s',
-                                  status_code, response.reason)
+                            print('unexpected status code: %d, err msg: %s' %
+                                  (status_code,response.reason))
                             retry += 1
                 if retry == max_retry:
-                    print('fail to send logs of iteration %d', log['iter_num'])
+                    print('fail to send logs of iteration %d' % log['iter_num'])

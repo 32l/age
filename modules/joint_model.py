@@ -3,6 +3,7 @@
 from __future__ import division, print_function
 
 import util.io as io
+from util.pavi import PaviClient
 import dataset
 import misc
 import opt_parser
@@ -43,7 +44,7 @@ class JointModel(nn.Module):
 
         print('[JointModel.init] fn: %s' % fn)
         print('[JointModel.init] fn_cnn: %s' % fn_cnn)
-        print('[JointModel.init] opts: %s' % opts)
+        # print('[JointModel.init] opts: %s' % opts)
 
 
         super(JointModel, self).__init__()
@@ -145,8 +146,6 @@ class JointModel(nn.Module):
             self.attr_cls = None
 
             
-
-
         # init weight
         if fn:
             print('[JointModel.init] loading weights from %s' % fn)
@@ -159,12 +158,12 @@ class JointModel(nn.Module):
             self._init_weight(self.feat_embed)
             self._init_weight(self.age_cls)
             if opts.pose_cls == 1:
-                self._init_weight(self.pose_cls)
+                self._init_weight(self.pose_cls, mode = 'normal')
             if opts.attr_cls == 1:
                 self._init_weight(self.attr_cls)
 
 
-    def _init_weight(self, model):
+    def _init_weight(self, model = None, mode = 'xavier'):
 
         if model is None:
             return
@@ -173,7 +172,10 @@ class JointModel(nn.Module):
             for p_name, p in layer._parameters.iteritems():
                 if p is not None:
                     if p_name == 'weight':
-                        nn.init.xavier_normal(p.data)
+                        if mode == 'xavier':
+                            nn.init.xavier_normal(p.data)
+                        elif mode == 'normal':
+                            nn.init.normal(p.data, 0, 0.001)
                     elif p_name == 'bias':
                         nn.init.constant(p.data, 0)
 
@@ -330,9 +332,12 @@ class JointModel(nn.Module):
 
 def train_model(model, train_opts):
 
-    print('[JointModel.train] training options: %s' % train_opts)
+    
     if not train_opts.id.startswith('joint_'):
         train_opts.id = 'joint_' + train_opts.id
+
+    opts_str = opt_parser.opts_to_string([('model_opts', model.opts), ('train_opts', train_opts)])
+    print(opts_str)
 
     ### move model to GPU
     if torch.cuda.device_count() > 1:
@@ -378,9 +383,9 @@ def train_model(model, train_opts):
 
     # attribute
     if train_opts.train_attr == 1:
-        attr_train_dset = dataset.load_attribute_dataset(dset_name = 'celeba', subset = 'train', alignment = train_opts.face_alignment, 
+        attr_train_dset = dataset.load_attribute_dataset(dset_name = train_opts.attr_dataset, subset = 'train', alignment = train_opts.face_alignment, 
             debug = train_opts.debug, crop_size = train_opts.crop_size)
-        attr_test_dset = dataset.load_attribute_dataset(dset_name = 'celeba', subset = 'test', alignment = train_opts.face_alignment,
+        attr_test_dset = dataset.load_attribute_dataset(dset_name = train_opts.attr_dataset, subset = 'test', alignment = train_opts.face_alignment,
             debug = train_opts.debug, crop_size = train_opts.crop_size)
 
         attr_train_loader = torch.utils.data.DataLoader(attr_train_dset, batch_size = train_opts.batch_size, shuffle = True, 
@@ -443,11 +448,10 @@ def train_model(model, train_opts):
 
 
     ### output training information
+    # json_log
     output_dir = os.path.join('models', train_opts.id)
     io.mkdir_if_missing(output_dir)
     fn_info = os.path.join(output_dir, 'info.json')
-    fn_log = os.path.join(output_dir, 'log.txt')
-
     info = {
         'opts': vars(model.opts),
         'train_opts': vars(train_opts),
@@ -461,10 +465,19 @@ def train_model(model, train_opts):
         io.save_json(info, fn_info)
 
 
-    ### main training loop
-    epoch = 0 # this is the epoch idex of age data
+    # text_log
+    fn_log = os.path.join(output_dir, 'log.txt')
     fout = open(fn_log, 'w')
+    print(opts_str, file = fout)
 
+    # pavi_log
+    pavi = PaviClient(username = 'ly015', password = '123456')
+    pavi.connect(model_name = train_opts.id, info = {'session_text': opts_str})
+
+
+    ### main training loop
+
+    epoch = 0 # this is the epoch idex of age data
     while epoch < train_opts.max_epochs:
 
         # set model mode
@@ -547,6 +560,7 @@ def train_model(model, train_opts):
 
             # display
             if batch_idx % train_opts.display_interval == 0:
+                iteration = batch_idx + epoch * len(age_train_loader)
 
                 loss_age = crit_age.smooth_loss()
                 mae_age = meas_age.mae()
@@ -563,17 +577,22 @@ def train_model(model, train_opts):
                 log = log + '\n\t' + log_age
                 
                 train_info = {
-                    'iteration': batch_idx + epoch * len(age_train_loader),
+                    'iteration': iteration,
                     'epoch': epoch,
                     'loss_age': loss_age, 
                     'mae_age': mae_age
+                }
+
+                pavi_outputs = {
+                    'loss_age': loss_age,
+                    'mae_age_upper': mae_age,
                 }
 
                 
                 if train_opts.train_pose:
 
                     loss_pose = crit_pose.smooth_loss()
-                    mae_pose = meas_pose.mae()
+                    mae_pose = meas_pose.mae().tolist()
 
                     crit_pose.clear()
                     meas_pose.clear()
@@ -586,7 +605,11 @@ def train_model(model, train_opts):
                     log = log + '\n\t' + log_pose
 
                     train_info['loss_pose'] = loss_pose
-                    train_info['mae_pose'] = mae_pose.tolist()
+                    train_info['mae_pose'] = mae_pose
+
+                    pavi_outputs['loss_pose'] = loss_pose
+                    for i in range(model.opts.pose_dim):
+                        pavi_outputs['mae_pose_%s_upper' % ['yaw', 'pitch', 'roll'][i]] = mae_pose[i]
 
 
                 if train_opts.train_attr:
@@ -597,11 +620,15 @@ def train_model(model, train_opts):
                     log = log + '\n\t' + log_attr
 
                     train_info['loss_attr'] = loss_attr
+                    pavi_outputs['loss_attr'] = loss_attr
 
                 print(log) # to screen
                 print(log, file = fout) # to log file
 
                 info['train_history'].append(train_info)
+                pavi.log(phase = 'train', iter_num = iteration, outputs = pavi_outputs)
+
+
 
         # update epoch index
         epoch += 1
@@ -609,6 +636,7 @@ def train_model(model, train_opts):
         # test
         if train_opts.test_interval > 0 and epoch % train_opts.test_interval == 0:
             ## test age, pose, attribute respectively
+            iteration = epoch * len(age_train_loader)
 
             ## set test mode
             model.eval()
@@ -633,7 +661,7 @@ def train_model(model, train_opts):
                 if use_age_std:
                     meas_age.add(age_out, age_gt, age_std)
                 else:
-                    meas_age.add(age_out, age_gt, age_std)
+                    meas_age.add(age_out, age_gt)
 
                 print('\r Testing Age %d/%d (%.2f%%)' % (batch_idx, len(age_test_loader), 100.*batch_idx/len(age_test_loader)), end = '')
             print('\n')
@@ -652,14 +680,24 @@ def train_model(model, train_opts):
             log = '[%s] [%s] Test Epoch %d   Loss: %.6f   Mae: %.2f  CA(3): %.2f CA(5): %.2f CA(10): %.2f LAP: %.4f' % \
                     (time.ctime(), train_opts.id, epoch, loss_age, mae_age, ca3, ca5, ca10, lap_err)
 
+            log_age = '[Age]   Loss: %.6f (weight: %.0e)   Mae: %.2f  CA(3): %.2f CA(5): %.2f CA(10): %.2f LAP: %.4f' % \
+                    (loss_age, train_opts.loss_weight_age, mae_age, ca3, ca5, ca10, lap_err)
+
+            log = log + '\n\t' + log_age
+
             test_info = {
-                'iteration': epoch * len(age_train_loader),
+                'iteration': iteration,
                 'epoch': epoch,
                 'loss_age': loss_age,
                 'mae_age': mae_age,
                 'ca3': ca3,
                 'ca5': ca5,
                 'ca10': ca10
+            }
+
+            pavi_outputs = {
+                'loss_age': loss_age,
+                'mae_age_upper': mae_age,
             }
 
             ## test pose
@@ -681,7 +719,7 @@ def train_model(model, train_opts):
                 print('\n')
 
                 loss_pose = crit_pose.smooth_loss()
-                mae_pose = meas_pose.mae()
+                mae_pose = meas_pose.mae().tolist()
 
                 crit_pose.clear()
                 meas_pose.clear()
@@ -693,7 +731,11 @@ def train_model(model, train_opts):
                 log = log + '\n\t' + log_pose
 
                 test_info['loss_pose'] = loss_pose
-                test_info['mae_pose'] = mae_pose.tolist()
+                test_info['mae_pose'] = mae_pose
+
+                pavi_outputs['loss_pose'] = loss_pose
+                for i in range(model.opts.pose_dim):
+                    pavi_outputs['mae_pose_%s_upper' % ['yaw', 'pitch', 'roll'][i]] = mae_pose[i]
 
             ## test attribute
             if train_opts.train_attr:
@@ -726,7 +768,7 @@ def train_model(model, train_opts):
                 log_attr_details = '\n'.join(['%-20s   AP: %.2f   AP_PN: %.2f' % (attr_name, ap, ap_pn) for 
                     (attr_name, ap, ap_pn) in zip(model.attr_name_lst, ap_attr, ap_pn_attr)])
 
-                log = log + '\n\t' + log_attr + '\n\t' + log_attr_details
+                log = log + '\n\t' + log_attr + '\n\n' + log_attr_details
 
                 test_info['loss_attr'] = loss_attr
                 test_info['mean_ap_attr'] = mean_ap_attr.tolist()
@@ -734,11 +776,16 @@ def train_model(model, train_opts):
                 test_info['mean_ap_pn_attr'] = mean_ap_pn_attr.tolist()
                 test_info['ap_pn_attr'] = ap_pn_attr.tolist()
 
+                pavi_outputs['loss_attr'] = loss_attr
+                pavi_outputs['mean_ap_attr_upper'] = mean_ap_attr.tolist()
+
 
             print(log)
             print(log, file = fout)
 
             info['test_history'].append(test_info)
+
+            pavi.log(phase = 'test', iter_num = iteration, outputs = pavi_outputs)
 
         # snapshot
         if train_opts.snapshot_interval > 0 and epoch % train_opts.snapshot_interval == 0:
@@ -774,5 +821,6 @@ if __name__ == '__main__':
             fn = os.path.join('models', train_opts.pre_id[0], 'final.pth')
         else:
             fn = train_opts.pre_id[0]
+
 
 

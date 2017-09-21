@@ -58,10 +58,10 @@ def parse_opts_joint_model():
     parser.add_argument('--attr_cls', type = int, default = 1, choices = [0, 1],
         help = 'whether has attribute classifier [0-no | 1-yes]')
 
-    parser.add_argument('--num_attr', type = int, default = 40,
-        help = 'number of attributes, 40 for celebA')
+    parser.add_argument('--num_attr', type = int, default = 6,
+        help = 'number of attributes, 40 for celeba, 6 for celeba_selc1')
 
-    parser.add_argument('--attr_name_fn', type = str, default = 'datasets/CelebA/Label/attr_name_lst.txt',
+    parser.add_argument('--attr_name_fn', type = str, default = 'datasets/CelebA/Label/attr_name_selc1_lst.txt',
         help = 'attribute name list file')
 
 
@@ -87,6 +87,8 @@ def parse_opts_pose_model():
     parser.add_argument('--dropout', type = float, default = 0,
         help = 'dropout rate')
 
+    parser.add_argument('--output_norm', type = int, default = 0, choices = [0, 1])
+
     opts = parser.parse_known_args()[0]
     return opts
 
@@ -104,10 +106,10 @@ def parse_opts_attribute_model():
     parser.add_argument('--fc_sizes', type = int, default = [256],
         help = 'size of intermediate fc layers')
 
-    parser.add_argument('--num_attr', type = int, default = 40,
-        help = 'number of attributes, 40 for celebA')
+    parser.add_argument('--num_attr', type = int, default = 6,
+        help = 'number of attributes, 40 for celeba, 6 for celeba_selc1')
 
-    parser.add_argument('--attr_name_fn', type = str, default = 'datasets/CelebA/Label/attr_name_lst.txt',
+    parser.add_argument('--attr_name_fn', type = str, default = 'datasets/CelebA/Label/attr_name_selc1_lst.txt',
         help = 'attribute name list file')
 
     parser.add_argument('--dropout', type = float, default = 0,
@@ -240,7 +242,7 @@ def parse_opts_train():
 
     parser.add_argument('--only_load_cnn', type = int, default = 1, choices = [0, 1],
         help = '0-load pretrained weights for all layers, 1-load pretrained weights only for CNN')
-
+    
     # joint training
     parser.add_argument('--train_cnn', type = int, default = 1, choices = [0, 1],
         help = 'whether optimize cnn parameters')
@@ -265,6 +267,10 @@ def parse_opts_train():
 
     parser.add_argument('--age_cls_multiplier', type = float, default = 10,
         help = 'learning rate multiplier of the age classifier layers')
+
+    parser.add_argument('--attr_dataset', type = str, default = 'celeba_selc1',
+        choices = ['celeba', 'celeba_selc1'],
+        help = 'dataset for attribute recognition')
 
     opts = parser.parse_known_args()[0]
     return opts
@@ -306,6 +312,16 @@ def parse_opts_test():
     opts = parser.parse_known_args()[0]
     return opts
     
+
+def opts_to_string(opts_lst):
+
+    opts_str = ''
+    for opt_name, opt in opts_lst:
+        if not isinstance(opt, dict):
+            opt = vars(opt)
+        opts_str += (opt_name + '\n')
+        opts_str += '\n'.join(['  %-20s: %s' % (k,v) for k,v in opt.iteritems()])
+    return opts_str
 
 if __name__ == '__main__':
 
