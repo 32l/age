@@ -3,6 +3,7 @@
 from __future__ import division, print_function
 
 import util.io as io
+from util.pavi import PaviClient
 import dataset
 import misc
 import opt_parser
@@ -48,7 +49,7 @@ class AgeModel(nn.Module):
 
         print('[AgeModel.init] fn: %s' % fn)
         print('[AgeModel.init] fn_cnn: %s' % fn_cnn)
-        print('[AgeModel.init] opts: %s' % opts)
+        # print('[AgeModel.init] opts: %s' % opts)
 
 
         super(AgeModel, self).__init__()
@@ -119,15 +120,16 @@ class AgeModel(nn.Module):
             model_info = torch.load(fn, map_location=lambda storage, loc: storage)
             self.cnn.load_state_dict(model_info['cnn_state_dict'])
             self.cls.load_state_dict(model_info['cls_state_dict'])
+        elif fn_cnn:
+            print('[AgeModel.init] loading CNN weights from %s' % fn_cnn)
+            model_info = torch.load(fn_cnn, map_location=lambda storage, loc: storage)
+            self.cnn.load_state_dict(model_info['cnn_state_dict'])
+            self._init_weight(self.cls)
         else:
-            if fn_cnn:
-                print('[AgeModel.init] loading CNN weights from %s' % fn_cnn)
-                model_info = torch.load(fn_cnn, map_location=lambda storage, loc: storage)
-                self.cnn.load_state_dict(model_info['cnn_state_dict'])
             self._init_weight(self.cls)
 
 
-    def _init_weight(self, model = None):
+    def _init_weight(self, model = None, mode = 'xavier'):
 
         if model is None:
             model = self
@@ -136,11 +138,16 @@ class AgeModel(nn.Module):
             for p_name, p in layer._parameters.iteritems():
                 if p is not None:
                     if p_name == 'weight':
+                        # nn.init.xavier_normal(p.data)
                         # nn.init.kaiming_uniform(p.data)
-                        nn.init.xavier_normal(p.data)
                         # nn.init.normal(p.data, 0, 0.001)
                         # nn.init.uniform(p.data, -0.08, 0.08)
                         # pass
+
+                        if mode == 'xavier':
+                            nn.init.xavier_normal(p.data)
+                        elif mode == 'normal':
+                            nn.init.normal(p.data, 0, 0.01)
                     elif p_name == 'bias':
                         nn.init.constant(p.data, 0)
 
@@ -209,13 +216,37 @@ class AgeModel(nn.Module):
 
         return age_out, fc_out
 
+    def forward_video(self, img_seq, seq_len):
+        '''
+        Forward video clips
+        Input: 
+            img_seq: (bsz, max_len, 3, 224, 224). Video data mini-batch
+            seq_len: (bsz,). Length of each video clip.
+        Output:
+            age_out: (bsz, max_len). Predicted age
+            fc_out:  (bsz, max_len, fc_size)
+
+        '''
+
+        bsz, max_len = img_seq.size()[0:2]
+
+        img_seq = img_seq.view(bsz * max_len, img_seq.size(2), img_seq.size(3), img_seq.size(4))
+
+        age_out, fc_out = self.forward(img_seq)
+
+        age_out = age_out.view(bsz, max_len)
+        fc_out = fc_out.view(bsz, max_len, -1)
+
+        return age_out, fc_out
+
 
 def train_model(model, train_opts):
 
-    print('[AgeModel.train] training options: %s' % train_opts)
-
     if not train_opts.id.startswith('age_'):
         train_opts.id = 'age_' + train_opts.id
+
+    opts_str = opt_parser.opts_to_string([('model_opts', model.opts), ('train_opts', train_opts)])
+    print(opts_str)
 
     # move model to GPU
     if torch.cuda.device_count() > 1:
@@ -234,7 +265,7 @@ def train_model(model, train_opts):
         num_workers = 4, pin_memory = True)
 
     # special dataset
-    if train_opts.dataset in {'lap'}:
+    if train_opts.dataset in {'lap', 'video_age'}:
         use_age_std = True
     else:
         use_age_std = False
@@ -267,7 +298,13 @@ def train_model(model, train_opts):
     meas = misc.Cumulative_Accuracy()
 
 
-    # define output information
+
+    ## output information
+    # json_log
+    output_dir = os.path.join('models', train_opts.id)
+    io.mkdir_if_missing(output_dir)
+    fn_info = os.path.join(output_dir, 'info.json')
+
     info = {
         'opts': vars(model.opts),
         'train_opts': vars(train_opts),
@@ -275,18 +312,20 @@ def train_model(model, train_opts):
         'test_history': [],
     }
 
-    # output dir
-    output_dir = os.path.join('models', train_opts.id)
-    io.mkdir_if_missing(output_dir)
-    # output text log file
-    fout = open(os.path.join(output_dir, 'log.txt'), 'w')
-    # output json file
-    fn_info = os.path.join(output_dir, 'info.json')
-
     def _snapshot(epoch):
         print('saving checkpoint to %s\t' % output_dir)
         model.save_model(os.path.join(output_dir, '%s.pth' % epoch))
         io.save_json(info, fn_info)
+
+
+    # text_log
+    fout = open(os.path.join(output_dir, 'log.txt'), 'w')
+    print(opts_str, file = fout)
+
+    # pavi_log
+    pavi = PaviClient(username = 'ly015', password = '123456')
+    pavi.connect(model_name = train_opts.id, info = {'session_text': opts_str})
+    
 
     # create loss buffer
     if train_opts.average_loss < 0:
@@ -354,12 +393,18 @@ def train_model(model, train_opts):
                 print(log) # to screen
                 print(log, file = fout) # to log file
 
-                batch_idx_glb = batch_idx + epoch * len(train_loader)
+                iteration = batch_idx + epoch * len(train_loader)
                 info['train_history'].append({
-                    'iteration': batch_idx_glb,
+                    'iteration': iteration,
                     'epoch': epoch, 
                     'loss': loss_smooth, 
                     'mae': mae_smooth})
+
+                pavi_outputs = {
+                    'loss_age': loss_smooth,
+                    'mae_age_upper': mae_smooth
+                }
+                pavi.log(phase = 'train', iter_num = iteration, outputs = pavi_outputs)
 
         # update epoch index
         epoch += 1
@@ -406,21 +451,39 @@ def train_model(model, train_opts):
             # display
             loss = crit.smooth_loss()
             mae = meas.mae()
+            ca3 = meas.ca(3)
+            ca5 = meas.ca(5)
+            ca10 = meas.ca(10)
+            lap_err = meas.lap_err()
+
+            crit.clear()
+            meas.clear()
 
             log = '[%s] [%s] Test Epoch %d   Loss: %.6f   Mae: %.2f  CA(3): %.2f CA(5): %.2f CA(10): %.2f LAP: %.4f' % \
-                    (time.ctime(), train_opts.id, epoch, loss, mae, meas.ca(3), meas.ca(5), meas.ca(10), meas.lap_err())
+                    (time.ctime(), train_opts.id, epoch, loss, mae, ca3, ca5, ca10, lap_err)
 
             print('\n' + log)
             print(log, file = fout)
 
+            iteration = epoch * len(train_loader)
+
             info['test_history'].append({
-                    'iteration': epoch * len(train_loader),
+                    'iteration': iteration,
                     'epoch': epoch, 
                     'loss': loss, 
-                    'mae': mae})
-            
-            crit.clear()
-            meas.clear()
+                    'mae': mae,
+                    'ca3': ca3,
+                    'ca5': ca5,
+                    'ca10': ca10,
+                    'lap_err': lap_err
+                    })
+
+            pavi_outputs = {
+                'loss_age': loss,
+                'mae_age_upper': mae,
+            }
+
+            pavi.log(phase = 'test', iter_num = iteration, outputs = pavi_outputs)
 
         # snapshot
         if train_opts.snapshot_interval > 0 and epoch % train_opts.snapshot_interval == 0:
@@ -504,12 +567,96 @@ def test_model(model, test_opts):
 
     io.save_json(info, fn_info)
 
-    if test_opts.output_rst:
+    if test_opts.output_rst == 1:
         age_pred = np.concatenate(age_pred).tolist()
         assert len(age_pred) == len(test_dset.sample_lst)
 
-        rst_list = {s['id']:{'age': a} for s, a in zip(test_dset.sample_lst, age_pred)}
-        io.save_data(rst_list, fn_rst)
+        rst = {s['id']:{'age': a} for s, a in zip(test_dset.sample_lst, age_pred)}
+        io.save_data(rst, fn_rst)
+
+
+
+def test_model_video(model, test_opts):
+
+    print('[AgeModel.test_video] test options: %s' % test_opts)
+    if torch.cuda.device_count() > 1:
+        model.cnn = nn.DataParallel(model.cnn)
+    model.cuda()
+    model.eval()
+
+    # create dataloader
+    test_dset = dataset.load_video_age_dataset(version = test_opts.dataset_version, subset = test_opts.subset, 
+        crop_size = test_opts.crop_size, age_rng = [0, 70])
+    test_loader = torch.utils.data.DataLoader(test_dset, batch_size = test_opts.batch_size, num_workers = 4)
+
+    # metrics
+    meas = misc.Video_Age_Analysis()
+
+    age_pred = []
+
+    for batch_idx, data in enumerate(test_loader):
+
+        img_seq, seq_len, age_gt, age_std = data
+        img_seq = Variable(img_seq, volatile = True).cuda()
+        seq_len = Variable(seq_len, volatile = True).cuda()
+        age_gt = age_gt.float()
+        age_std = age_std.float()
+
+        # forward
+        age_out, _ = model.forward_video(img_seq, seq_len)
+
+        meas.add(age_out, age_gt, seq_len, age_std)
+
+        if test_opts.output_rst == 1:
+            for i, l in enumerate(seq_len):
+                l = int(l.data[0])
+                age_pred.append(age_out.data.cpu()[i,0:l].numpy().tolist())
+
+        print('\rTesting %d/%d (%.2f%%)' % (batch_idx, len(test_loader), 100.*batch_idx/len(test_loader)), end = '')
+        sys.stdout.flush()
+    print('\n')
+
+    # define output information
+    info = {
+        'test_opts': vars(test_opts),
+        'test_result': {
+            'mae': meas.mae(),
+            'ca3': meas.ca(3),
+            'ca5': meas.ca(5),
+            'ca10': meas.ca(10),
+            'lap_err': meas.lap_err(),
+            'der': meas.stable_der(),
+            'range': meas.stable_range()
+        }
+    }
+
+    print('[AgeModel.test_video] Test model id: %s' % test_opts.id)
+    for metric in ['mae', 'ca3', 'ca5', 'ca10', 'lap_err', 'der', 'range']:
+        print('\t%s\t%f' % (metric, info['test_result'][metric]))
+
+    # output dir
+    if test_opts.id.endswith('.pth'):
+        # test_opts.id is file name
+        output_dir = os.path.dirname(test_opts.id)
+    else:
+        # test_opts.id is model id
+        output_dir = os.path.join('models', test_opts.id)
+
+    assert os.path.isdir(output_dir)
+
+    fn_info = os.path.join(output_dir, 'video_test_info.json')
+    io.save_json(info, fn_info)
+
+
+    if test_opts.output_rst == 1:
+        id_lst = test_dset.id_lst
+        assert len(id_lst) == len(age_pred)
+        
+        rst = {s_id: a for s_id, a in zip(id_lst, age_pred)}
+
+        fn_rst = os.path.join(output_dir, 'video_test_rst.pkl')
+        io.save_data(rst, fn_rst)
+
 
 
 if __name__ == '__main__':
@@ -558,6 +705,18 @@ if __name__ == '__main__':
 
         model = AgeModel(fn = fn)
         test_model(model, test_opts)
+
+    elif command == 'test_video':
+        test_opts = opt_parser.parse_opts_test()
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in test_opts.gpu_id])
+
+        if test_opts.id.endswith('.pth'):
+            fn = test_opts.id
+        else:
+            fn = os.path.join('models', test_opts.id, 'final.pth')
+
+        model = AgeModel(fn = fn)
+        test_model_video(model, test_opts)
 
     else:
         raise Exception('invalid command "%s"' % command)

@@ -7,7 +7,7 @@ def parse_command():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('command', type = str, default = 'help',
-        choices = ['train', 'test', 'finetune', 'help'], help = 'valid commands: train, test, help')
+        choices = ['train', 'test', 'finetune', 'test_video', 'help'], help = 'valid commands: train, test, help')
 
     command = parser.parse_known_args()[0].command
 
@@ -58,10 +58,10 @@ def parse_opts_joint_model():
     parser.add_argument('--attr_cls', type = int, default = 1, choices = [0, 1],
         help = 'whether has attribute classifier [0-no | 1-yes]')
 
-    parser.add_argument('--num_attr', type = int, default = 6,
+    parser.add_argument('--num_attr', type = int, default = 40,
         help = 'number of attributes, 40 for celeba, 6 for celeba_selc1')
 
-    parser.add_argument('--attr_name_fn', type = str, default = 'datasets/CelebA/Label/attr_name_selc1_lst.txt',
+    parser.add_argument('--attr_name_fn', type = str, default = 'datasets/CelebA/Label/attr_name_lst.txt',
         help = 'attribute name list file')
 
 
@@ -78,7 +78,7 @@ def parse_opts_pose_model():
     parser.add_argument('--num_fc', type = int, default = 1, choices = [0, 1],
         help = 'number of fc layers in classifier')
 
-    parser.add_argument('--fc_sizes', type = int, default = [256],
+    parser.add_argument('--fc_sizes', type = int, default = [256], nargs = '*',
         help = 'size of intermediate fc layers')
 
     parser.add_argument('--pose_dim', type = int, default = 1, choices = [1, 2],
@@ -103,13 +103,13 @@ def parse_opts_attribute_model():
     parser.add_argument('--num_fc', type = int, default = 1, choices = [0, 1],
         help = 'number of fc layers in classifier')
 
-    parser.add_argument('--fc_sizes', type = int, default = [256],
+    parser.add_argument('--fc_sizes', type = int, default = [256], nargs = '*',
         help = 'size of intermediate fc layers')
 
-    parser.add_argument('--num_attr', type = int, default = 6,
+    parser.add_argument('--num_attr', type = int, default = 40,
         help = 'number of attributes, 40 for celeba, 6 for celeba_selc1')
 
-    parser.add_argument('--attr_name_fn', type = str, default = 'datasets/CelebA/Label/attr_name_selc1_lst.txt',
+    parser.add_argument('--attr_name_fn', type = str, default = 'datasets/CelebA/Label/attr_name_lst.txt',
         help = 'attribute name list file')
 
     parser.add_argument('--dropout', type = float, default = 0,
@@ -166,8 +166,12 @@ def parse_opts_train():
 
     # data
     parser.add_argument('--dataset', type = str, default = 'imdb_wiki_good',
-        choices = ['imdb_wiki', 'imdb_wiki_good', 'megaage', 'morph', 'lap'],
-        help = 'dataset name [imdb_wiki|imdb_wiki_good|megaage|morph|lap]')
+        choices = ['imdb_wiki', 'imdb_wiki_good', 'megaage', 'morph', 'lap', 'video_age'],
+        help = 'dataset name [imdb_wiki|imdb_wiki_good|megaage|morph|lap|video_age]')
+
+    parser.add_argument('--dataset_version', type = str, default = '1.0',
+        choices = ['1.0'],
+        help = 'video_age dataset version')
 
     parser.add_argument('--face_alignment', type = str, default = '21',
         choices = ['3', '21', 'none'],
@@ -250,25 +254,25 @@ def parse_opts_train():
     parser.add_argument('--train_embed', type = int, default = 1, choices = [0, 1],
         help = 'whether optimize feature embedding layer parameters')
 
-    parser.add_argument('--train_pose', type = int, default = 0, choices = [0, 1],
+    parser.add_argument('--train_pose', type = int, default = 1, choices = [0, 1],
         help = 'whether optimize pose classifier parameters [0-no | 1-yes]')
 
-    parser.add_argument('--train_attr', type = int, default = 0, choices = [0, 1],
+    parser.add_argument('--train_attr', type = int, default = 1, choices = [0, 1],
         help = 'whether optimize attribute classifier parameters [0-no | 1-yes]')
 
     parser.add_argument('--loss_weight_age', type = float, default = 1,
         help = 'age loss weight')
 
-    parser.add_argument('--loss_weight_pose', type = float, default = 1,
+    parser.add_argument('--loss_weight_pose', type = float, default = 0.2,
         help = 'pose loss weight')
 
-    parser.add_argument('--loss_weight_attr', type = float, default = 1,
+    parser.add_argument('--loss_weight_attr', type = float, default = 10,
         help = 'attribute loss weight')
 
     parser.add_argument('--age_cls_multiplier', type = float, default = 10,
         help = 'learning rate multiplier of the age classifier layers')
 
-    parser.add_argument('--attr_dataset', type = str, default = 'celeba_selc1',
+    parser.add_argument('--attr_dataset', type = str, default = 'celeba',
         choices = ['celeba', 'celeba_selc1'],
         help = 'dataset for attribute recognition')
 
@@ -286,14 +290,18 @@ def parse_opts_test():
     parser.add_argument('--gpu_id', type = int, default = [0], nargs = '*',
         help = 'GPU device id used for model training')
 
-    parser.add_argument('--output_rst', type = int, default = 0, choices = [0, 1],
+    parser.add_argument('--output_rst', type = int, default = 1, choices = [0, 1],
         help = 'output predicted age of each sample to a pkl file')
 
 
     # data
-    parser.add_argument('--dataset', type = str, default = 'imdb_wiki',
-        choices = ['imdb_wiki', 'imdb_wiki_good', 'megaage', 'morph'],
-        help = 'dataset name [imdb_wiki|imdb_wiki_good|megaage|morph]')
+    parser.add_argument('--dataset', type = str, default = 'imdb_wiki_good',
+        choices = ['imdb_wiki', 'imdb_wiki_good', 'megaage', 'morph', 'lap', 'video_age'],
+        help = 'dataset name [imdb_wiki|imdb_wiki_good|megaage|morph|lap|video_age]')
+
+    parser.add_argument('--dataset_version', type = str, default = '1.0',
+        choices = ['1.0'],
+        help = 'video_age dataset version')
 
     parser.add_argument('--subset', type = str, default = 'test',
         choices = ['train', 'test', 'val'],
@@ -321,6 +329,7 @@ def opts_to_string(opts_lst):
             opt = vars(opt)
         opts_str += (opt_name + '\n')
         opts_str += '\n'.join(['  %-20s: %s' % (k,v) for k,v in opt.iteritems()])
+        opts_str += '\n\n'
     return opts_str
 
 if __name__ == '__main__':

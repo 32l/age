@@ -853,7 +853,6 @@ def image_align_face(dataset = 'megaage', key_point_num = 21):
 
 
 
-
 if __name__ == '__main__':
 
     ## image

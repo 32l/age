@@ -125,14 +125,14 @@ class PoseModel(nn.Module):
                     self.feat_embed.load_state_dict(model_info['feat_embed_state_dict'])
                 else:
                     self._init_weight(self.feat_embed)
-            self._init_weight(self.reg)
+            self._init_weight(self.reg, mode = 'normal')
         else:
             print('[PoseModel.init] Random initialize parameters')
-            self._init_weight(self.feat_embed)
-            self._init_weight(self.reg)
+            self._init_weight(self.feat_embed, mode = 'normal')
+            self._init_weight(self.reg, mode = 'normal')
 
 
-    def _init_weight(self, model = None, mode = 'normal'):
+    def _init_weight(self, model = None, mode = 'xavier'):
 
         if model is None:
             model = self
@@ -150,7 +150,7 @@ class PoseModel(nn.Module):
                         if mode == 'xavier':
                             nn.init.xavier_normal(p.data)
                         elif mode == 'normal':
-                            nn.init.normal(p.data, 0, 0.001)
+                            nn.init.normal(p.data, 0, 0.01)
                     elif p_name == 'bias':
                         nn.init.constant(p.data, 0)
 
@@ -187,7 +187,7 @@ class PoseModel(nn.Module):
         Input:
             img: (bsz, 3, 224, 224). Image data mini-batch
         Output:
-            pose_out: (bsz, pose_dim). Predicted age.
+            pose_out: (bsz, pose_dim). Predicted pose.
         '''
 
         cnn_feat = self.cnn(img)
@@ -202,6 +202,31 @@ class PoseModel(nn.Module):
             pose = F.tanh(pose) * np.pi
 
         return pose
+
+    def forward_video(self, img_seq, seq_len):
+        '''
+        Forward video clips.
+        
+        Input:
+            img_seq: (bsz, max_len, 3, 224, 224). Video data mini-batch
+            seq_len: (bsz,). Length of each video clip.
+        Output:
+            pose_out: (bsz, max_len, pose_dim). Predicted pose.
+        '''
+
+        bsz, max_len = img_seq.size()[0:2]
+
+        img_seq = img_seq.view(bsz * max_len, img_seq.size(2), img_seq.size(3), img_seq.size(4))
+        
+        pose = self.forward(img_seq)
+        pose = pose.view(bsz, max_len, -1)
+
+        return pose
+
+
+
+
+
 
 
 def train_model(model, train_opts):
@@ -556,6 +581,60 @@ def test_model(model, test_opts):
 
     io.save_json(info, fn_info)
 
+
+def test_model_video(model, test_opts):
+    print('[PoseModel.test_video] test options: %s' % test_opts)
+
+    # move model to GPU and set to eval mode.
+    if torch.cuda.device_count() > 1:
+        model.cnn = nn.DataParallel(model.cnn)
+    model.cuda()
+    model.eval()
+
+    # create dataloader
+    test_dset = dataset.load_video_age_dataset(version = test_opts.dataset_version, subset = test_opts.subset, 
+        crop_size = test_opts.crop_size, age_rng = [0, 70])
+    test_loader = torch.utils.data.DataLoader(test_dset, batch_size = test_opts.batch_size, num_workers = 4)
+
+    pose_pred = []
+
+    for batch_idx, data in enumerate(test_loader):
+
+        img_seq, seq_len, _, _  = data
+        img_seq = Variable(img_seq, volatile = True).cuda()
+        seq_len = Variable(seq_len, volatile = True).cuda()
+
+        pose = model.forward_video(img_seq, seq_len)
+
+        for i, l in enumerate(seq_len):
+            l = int(l.data[0])
+            pose_pred.append(pose.data.cpu()[i, 0:l, :].numpy().tolist())
+        print('\rTesting %d/%d (%.2f%%)' % (batch_idx, len(test_loader), 100.*batch_idx/len(test_loader)), end = '')
+        sys.stdout.flush()
+    print('\n')
+
+
+    # result
+    id_lst = test_dset.id_lst
+    rst = {s_id:p for s_id, p in zip(id_lst, pose_pred)}
+
+    # output result
+    if test_opts.id.endswith('.pth'):
+        # test_opts.id is a file name
+        output_dir = os.path.dirname(test_opts.id)
+    else:
+        # test_opts.id is a model id
+        output_dir = os.path.join('models', test_opts.id)
+
+    assert os.path.isdir(output_dir)
+
+    fn_rst = os.path.join(output_dir, 'video_test_rst.pkl')
+    io.save_data(rst, fn_rst)
+
+
+
+
+
 if __name__ == '__main__':
 
     command = opt_parser.parse_command()
@@ -602,6 +681,18 @@ if __name__ == '__main__':
 
         model = PoseModel(fn = fn)
         test_model(model, test_opts)
+
+    elif command == 'test_video':
+        test_opts = opt_parser.parse_opts_test()
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in test_opts.gpu_id])
+
+        if test_opts.id.endswith('.pth'):
+            fn = test_opts.id
+        else:
+            fn = os.path.join('models', test_opts.id, 'final.pth')
+
+        model = PoseModel(fn = fn)
+        test_model_video(model, test_opts)
 
     else:
         raise Exception('invalid command "%s"' % command)

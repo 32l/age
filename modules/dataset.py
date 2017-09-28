@@ -7,6 +7,7 @@ import numpy as np
 import time
 from PIL import Image
 
+import torch
 import torch.utils.data as data
 from torchvision import transforms
 
@@ -77,6 +78,19 @@ def load_age_dataset(dset_name, subset = 'train', alignment = 'none', crop_size 
             img_root = './datasets/LAP_2016/Image'
         else:
             raise Exception('Invalid alignment mode %s for %s' % (alignment, dset_name))
+    
+    elif dset_name == 'video_age':
+
+        argv['age_std'] = True
+
+        if subset == 'train':
+            sample_lst_fn = './datasets/video_age/Labels/v1.0_image_train.json'
+            transform = StandardFaceTransform(flip = True, crop_size = crop_size)
+        elif subset == 'test':
+            sample_lst_fn = './datasets/video_age/Labels/v1.0_image_test.json'
+            transform = StandardFaceTransform(flip = False, crop_size = crop_size)
+
+        img_root = './'
 
     else:
         raise Exception('Unknown dataset "%s"' % dset_name)
@@ -84,6 +98,25 @@ def load_age_dataset(dset_name, subset = 'train', alignment = 'none', crop_size 
 
     return Image_Age_Dataset(img_root = img_root, sample_lst_fn = sample_lst_fn, 
             transform = transform, **argv)
+
+def load_video_age_dataset(version = '1.0', subset = 'test', crop_size = 128, **argv):
+
+    if version == '1.0':
+        age_fn = 'datasets/video_age/Labels/v1.0_age.json'
+        video_fn = 'datasets/video_age/Labels/v1.0_video.json'
+        split_fn = 'datasets/video_age/Labels/v1.0_split.json'
+    else:
+        raise Exception('Invalid version of video_age dataset: %s' % version)
+
+    if subset == 'train':
+        transform = StandardFaceTransform(flip = True, crop_size = crop_size)
+    else:
+        transform = StandardFaceTransform(flip = False, crop_size = crop_size)
+
+    return Video_Age_Dataset(subset = subset, age_fn = age_fn, video_fn = video_fn, 
+        split_fn = split_fn, transform = transform, **argv)
+
+
 
 def load_pose_dataset(dset_name, subset = 'train', alignment = 'none', crop_size = 128, debug = 0):
 
@@ -132,7 +165,6 @@ def load_attribute_dataset(dset_name, subset = 'train', alignment = 'none', crop
 
     return Attribute_Dataset(img_root = img_root, sample_lst_fn = sample_lst_fn, attr_name_fn = attr_name_fn,
         transform = transform, debug = debug)
-
 
 
 class StandardFaceTransform(object):
@@ -359,3 +391,71 @@ class Attribute_Dataset(data.Dataset):
         img = self.transform(img)
 
         return img, attr
+
+class Video_Age_Dataset(data.Dataset):
+    def __init__(self, subset, age_fn, video_fn, split_fn, mode = 'video', max_len = 17, age_rng = None, transform = None, debug = 0):
+        '''
+        subset: train | test
+        '''
+        
+        split = io.load_json(split_fn)
+        va_age = io.load_json(age_fn)
+        va_video = io.load_json(video_fn)
+
+        self.id_lst = split[subset]
+        self.max_len = max_len
+        self.age_rng = age_rng
+        self.mode = mode
+        self.transform = transform
+        self.debug = debug
+
+        if self.age_rng:
+            self.id_lst = [s_id for s_id in self.id_lst if self.age_rng[0] <= va_age[s_id]['age'] <= self.age_rng[1]]
+
+        self.age_lst = [va_age[s_id] for s_id in self.id_lst]
+        self.video_lst = [va_video[s_id] for s_id in self.id_lst]
+
+        self.len = len(self.id_lst)
+        print('[Video_Age_Dataset]\nsubset: %s\nsample: %d\nmode: %s\nage range: %s\nsplit_fn: %s\nage_fn: %s\nvideo_fn: %s\n' %\
+            (subset, self.len, self.mode, self.age_rng, split_fn, age_fn, video_fn))
+
+
+    def __len__(self):
+        return 1 if self.debug == 1 else self.len
+
+    def __getitem__(self, index):
+        '''
+        output data format:
+            img_seq: Tensor (max_T, c, w, h)
+            age: float value
+            std: float value
+            seq_len: int value
+        '''
+
+        if self.debug == 1:
+            index = 0
+
+        age = self.age_lst[index]['age']
+        std = self.age_lst[index]['std']
+        seq_len = len(self.video_lst[index]['frames'])
+
+        img_seq = []
+        for f in self.video_lst[index]['frames']:
+            img = Image.open(f['image']).convert('RGB')
+            img = self.transform(img)
+            img_seq.append(img)
+
+        img_seq = torch.stack(img_seq)
+
+        if img_seq.size(0) < self.max_len:
+            pad_sz = list(img_seq.size())
+            pad_sz[0] = long(self.max_len - img_seq.size(0))
+
+            img_seq = torch.cat((img_seq, torch.zeros(pad_sz)))
+        
+        elif img_seq.size(0) > self.max_len:
+            img_seq = img_seq[0:self.max_len,:]
+
+        return img_seq, seq_len, age, std
+
+

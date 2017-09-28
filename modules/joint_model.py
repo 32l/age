@@ -175,7 +175,7 @@ class JointModel(nn.Module):
                         if mode == 'xavier':
                             nn.init.xavier_normal(p.data)
                         elif mode == 'normal':
-                            nn.init.normal(p.data, 0, 0.001)
+                            nn.init.normal(p.data, 0, 0.01)
                     elif p_name == 'bias':
                         nn.init.constant(p.data, 0)
 
@@ -692,7 +692,8 @@ def train_model(model, train_opts):
                 'mae_age': mae_age,
                 'ca3': ca3,
                 'ca5': ca5,
-                'ca10': ca10
+                'ca10': ca10,
+                'lap_err': lap_err
             }
 
             pavi_outputs = {

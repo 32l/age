@@ -178,6 +178,128 @@ class Cumulative_Accuracy():
         else:
             return (1.-np.exp(-np.power(self.err_buffer/self.std_buffer, 2)/2)).mean()
 
+class Video_Age_Analysis():
+    '''
+    anylize video age estimatino performance
+    '''
+
+    def __init__(self):
+        self.clear()
+
+    def clear(self):
+        self.age_out_buffer = None
+        self.age_gt_buffer = None
+        self.std_buffer = None
+        self.seq_len_buffer = None
+        self.mask = None
+
+    def add(self, age_out, age_gt, seq_len, age_std = None):
+        
+        inputs = [age_out, age_gt, seq_len, age_std]
+
+        for i in range(len(inputs)):
+
+            if isinstance(inputs[i], list):
+                inputs[i] = np.array(inputs[i], dtype = np.float32)
+
+            elif isinstance(inputs[i], np.ndarray):
+                inputs[i] = inputs[i].astype(np.float32)
+
+            elif isinstance(inputs[i], torch.tensor._TensorBase):
+                inputs[i] = inputs[i].numpy().astype(np.float32)
+
+            elif isinstance(inputs[i], Variable):
+                inputs[i] = inputs[i].data.cpu().numpy().astype(np.float32)
+
+        age_out, age_gt, seq_len, age_std = inputs
+
+        age_gt = age_gt.flatten()
+        age_std = age_std.flatten()
+        seq_len = seq_len.flatten().astype(np.int)
+
+        if self.age_out_buffer is None:
+            self.age_out_buffer = age_out
+            self.age_gt_buffer = age_gt
+            self.seq_len_buffer = seq_len
+            if age_std is not None:
+                self.std_buffer = age_std
+        else:
+            self.age_out_buffer = np.concatenate((self.age_out_buffer, age_out))
+            self.age_gt_buffer = np.concatenate((self.age_gt_buffer, age_gt))
+            self.seq_len_buffer = np.concatenate((self.seq_len_buffer, seq_len))
+            if age_std is not None:
+                self.std_buffer = np.concatenate((self.std_buffer, age_std))
+
+        self.mask = None
+
+
+    def get_mask(self):
+        mask = self.age_out_buffer.copy()
+        for i in xrange(mask.shape[0]):
+            mask[i, 0:self.seq_len_buffer[i]] = self.age_gt_buffer[i]
+
+        self.mask = mask
+
+    def mae(self):
+
+        if self.mask is None:
+            self.get_mask()
+
+        mae = np.abs(self.age_out_buffer - self.mask).sum() / self.seq_len_buffer.sum()
+
+        return mae
+
+    def ca(self, k = 10):
+
+        if self.mask is None:
+            self.get_mask()
+
+        n = (np.abs(self.age_out_buffer - self.mask).round() <= k).sum() + self.seq_len_buffer.sum() - self.mask.size
+
+        return n / self.seq_len_buffer.sum() * 100.
+
+    def lap_err(self):
+
+        if self.std_buffer is None:
+            return -1.
+        else:
+            if self.mask is None:
+                self.get_mask()
+
+            err_mask = self.age_out_buffer - self.mask
+            std_mask = self.std_buffer.reshape(-1, 1).repeat(err_mask.shape[1], axis = 1)
+
+            return (1. - np.exp(-np.power(err_mask/std_mask, 2)/2)).sum() / self.seq_len_buffer.sum()
+
+    def stable_der(self):
+        '''
+        stability measured by 1-order derivative
+        '''
+
+        der_mask = np.abs(self.age_out_buffer[:,0:-1] - self.age_out_buffer[:, 1::])
+        der_sum = 0
+
+        for i, l in enumerate(self.seq_len_buffer):
+            l = int(l)
+            der_sum += der_mask[i, 0:(l-1)].sum()
+
+        return der_sum / (self.seq_len_buffer - 1).sum()
+
+    def stable_range(self):
+        '''
+        stability measured by the variation range (max-min) in a video clip
+        '''
+
+        rng_sum = 0
+        for i, l in enumerate(self.seq_len_buffer):
+            l = int(l)
+            age_seq = self.age_out_buffer[i, 0:l]
+            rng_sum += age_seq.max() - age_seq.min()
+
+        return rng_sum / self.seq_len_buffer.size
+
+
+
 class MeanAP():
     '''
     compute meanAP

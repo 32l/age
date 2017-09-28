@@ -242,13 +242,37 @@ def prepare_label():
 
                         image.imwrite(img, dst_fn)
 
+def add_person_name():
 
+    clip_fn_lst = [
+        'datasets/video_age/Source/Celebrity-1000_pose_clip.json',
+        'datasets/video_age/Source/Celebrity-1000_long_clip.json'
+    ]
+
+    names = io.load_str_list('datasets/facial_video/Celebrity_1000/names.txt')
+    names = [s.split(' ', 1) for s in names]
+    names = {s1:s2 for s1, s2 in names}
+
+    for k, n in names.iteritems():
+        try:
+            n.decode()
+        except:
+            n = (repr(n))
+            # n = 'Celebrity_person_%s' % k
+            print('%s, %s'%(k,n))
+        names[k] = n
+
+
+    for clip_fn  in clip_fn_lst:
+        clips = io.load_json(clip_fn)
+        for idx, clip in enumerate(clips):
+            # print('%s -> %s' % (clip['person_id'], names[clip['person_id']]))
+            clips[idx]['person_id'] = names[clip['person_id']]
+        io.save_json(clips, clip_fn)
 
 if __name__ == '__main__':
 
-    prepare_label()
-
-
-
+    # prepare_label()
+    add_person_name()
 
     
