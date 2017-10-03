@@ -2,17 +2,18 @@
 
 from __future__ import division, print_function
 
+import torch
+import torch.nn as nn
+from torch.autograd import Variable
+import torch.nn.functional as F
+import torchvision
+
 import util.io as io
 from util.pavi import PaviClient
 import dataset
 import misc
 import opt_parser
 
-import torch
-import torch.nn as nn
-from torch.autograd import Variable
-import torch.nn.functional as F
-import torchvision
 
 import os
 import sys
@@ -79,12 +80,12 @@ class AgeModel(nn.Module):
             self.feat_size = 2048
 
         elif opts.cnn == 'vgg16':
-            net = torchvision.model.vgg16(pretrained = True)
+            net = torchvision.models.vgg16(pretrained = True)
             cnn_layers = net.features._modules
             # replace the last maxpooling layer (kernel_sz = 2, stride = 2) with a more spares one.
-            cnn_layers['30'] = nn.MaxPool2d(kernel_size = (4, 4), stride = (4, 4), padding = (1, 1))
+            cnn_layers['30'] = nn.MaxPool2d(kernel_size = (7, 7), stride = (7, 7))
             self.cnn = nn.Sequential(cnn_layers)
-            self.feat_size = 8192 #(512 * 4 * 4)
+            self.feat_size = 2048 #(512 * 2 * 2)
 
         else:
             raise Exception('invalid cnn type %s' % opts.cnn)
@@ -253,22 +254,29 @@ def train_model(model, train_opts):
         model.cnn = nn.DataParallel(model.cnn)
     model.cuda()
 
-    # create data loader
-    train_dset = dataset.load_age_dataset(dset_name = train_opts.dataset, subset = 'train', debug = train_opts.debug,
-        alignment = train_opts.face_alignment, age_rng = [model.opts.min_age, model.opts.max_age], crop_size = train_opts.crop_size)
-    test_dset  = dataset.load_age_dataset(dset_name = train_opts.dataset, subset = 'test', debug = train_opts.debug,
-        alignment = train_opts.face_alignment, age_rng = [model.opts.min_age, model.opts.max_age], crop_size = train_opts.crop_size)
-
-    train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
-        num_workers = 4, pin_memory = True)
-    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = train_opts.batch_size, 
-        num_workers = 4, pin_memory = True)
 
     # special dataset
     if train_opts.dataset in {'lap', 'video_age'}:
         use_age_std = True
     else:
         use_age_std = False
+
+    if train_opts.dataset == 'video_age' and train_opts.train_split != '':
+        train_subset = 'train_%s' % train_opts.train_split
+    else:
+        train_subset = 'train'
+
+    # create data loader
+    train_dset = dataset.load_age_dataset(dset_name = train_opts.dataset, subset = train_subset, debug = train_opts.debug,
+        alignment = train_opts.face_alignment, age_rng = [model.opts.min_age, model.opts.max_age], crop_size = train_opts.crop_size)
+
+    test_dset  = dataset.load_age_dataset(dset_name = train_opts.dataset, subset = 'test', debug = train_opts.debug,
+        alignment = train_opts.face_alignment, age_rng = [model.opts.min_age, model.opts.max_age], crop_size = train_opts.crop_size)
+
+    train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
+        num_workers = 4, pin_memory = True)
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 512, 
+        num_workers = 4, pin_memory = True)
 
 
     # create optimizer
@@ -313,8 +321,9 @@ def train_model(model, train_opts):
     }
 
     def _snapshot(epoch):
-        print('saving checkpoint to %s\t' % output_dir)
-        model.save_model(os.path.join(output_dir, '%s.pth' % epoch))
+        fn_snapshot = os.path.join(output_dir, '%s.pth' % epoch)
+        print('saving checkpoint to %s' % fn_snapshot)
+        model.save_model(fn_snapshot)
         io.save_json(info, fn_info)
 
 
@@ -323,15 +332,23 @@ def train_model(model, train_opts):
     print(opts_str, file = fout)
 
     # pavi_log
-    pavi = PaviClient(username = 'ly015', password = '123456')
-    pavi.connect(model_name = train_opts.id, info = {'session_text': opts_str})
+    if train_opts.pavi == 1:
+        pavi = PaviClient(username = 'ly015', password = '123456')
+        pavi.connect(model_name = train_opts.id, info = {'session_text': opts_str})
     
 
     # create loss buffer
-    if train_opts.average_loss < 0:
-        train_opts.average_loss = train_opts.display_interval
+    # deprecated after using Smooth_Loss
+
+    # if train_opts.average_loss < 0:
+    #     train_opts.average_loss = train_opts.display_interval
 
     
+    # save checkpoint if getting a best performance
+    checkbest_name = 'mae'
+    checkbest_value = sys.float_info.max
+    checkbest_epoch = -1
+
     # main training loop
     epoch = 0
 
@@ -400,11 +417,12 @@ def train_model(model, train_opts):
                     'loss': loss_smooth, 
                     'mae': mae_smooth})
 
-                pavi_outputs = {
-                    'loss_age': loss_smooth,
-                    'mae_age_upper': mae_smooth
-                }
-                pavi.log(phase = 'train', iter_num = iteration, outputs = pavi_outputs)
+                if train_opts.pavi == 1:
+                    pavi_outputs = {
+                        'loss_age': loss_smooth,
+                        'mae_age_upper': mae_smooth
+                    }
+                    pavi.log(phase = 'train', iter_num = iteration, outputs = pavi_outputs)
 
         # update epoch index
         epoch += 1
@@ -416,7 +434,7 @@ def train_model(model, train_opts):
             # set test model
             model.eval()
 
-            # clean buffer
+            # clear buffer
             crit.clear()
             meas.clear()
 
@@ -478,12 +496,278 @@ def train_model(model, train_opts):
                     'lap_err': lap_err
                     })
 
-            pavi_outputs = {
-                'loss_age': loss,
-                'mae_age_upper': mae,
-            }
+            if train_opts.pavi == 1:
+                pavi_outputs = {
+                    'loss_age': loss,
+                    'mae_age_upper': mae,
+                }
+                pavi.log(phase = 'test', iter_num = iteration, outputs = pavi_outputs)
 
-            pavi.log(phase = 'test', iter_num = iteration, outputs = pavi_outputs)
+            # snapshot best
+            if info['test_history'][-1][checkbest_name] < checkbest_value:
+                print('checkbest_value: %f, latest_value: %f' % (checkbest_value, info['test_history'][-1][checkbest_name]))
+                checkbest_value = info['test_history'][-1][checkbest_name]
+                checkbest_epoch = epoch
+                _snapshot(epoch = 'best')
+
+        # snapshot
+        if train_opts.snapshot_interval > 0 and epoch % train_opts.snapshot_interval == 0:
+            _snapshot(epoch)
+
+
+    # final snapshot
+    _snapshot(epoch = 'final')
+
+    log = 'best performance: epoch %d' % checkbest_epoch
+    print(log)
+    print(log, file = fout)
+    fout.close()
+
+
+
+
+def train_model_video(model, train_opts):
+
+    if not train_opts.id.startswith('age_'):
+        train_opts.id = 'age_' + train_opts.id
+
+    opts_str = opt_parser.opts_to_string([('model_opts', model.opts), ('train_opts', train_opts)])
+    print(opts_str)
+
+    ## move model to GPU
+    if torch.cuda.device_count() > 1:
+        model.cnn = nn.DataParallel(model.cnn)
+    model.cuda()
+
+    # load video_age dataset
+    train_dset = dataset.load_video_age_dataset(version = train_opts.dataset_version, subset = 'train',
+        crop_size = train_opts.crop_size, age_rng = [model.opts.min_age, model.opts.max_age],
+        split = train_opts.train_split, max_len = train_opts.video_max_len)
+    test_dset = dataset.load_video_age_dataset(version = train_opts.dataset_version, subset = 'test',
+        crop_size = train_opts.crop_size, age_rng = [model.opts.min_age, model.opts.max_age])
+
+    train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
+        num_workers = 4, pin_memory = True)
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 32, 
+        num_workers = 4, pin_memory = True)
+
+
+    ## create optimizer
+
+    if train_opts.optim == 'sgd':
+        optimizer = torch.optim.SGD([
+            {'params': model.cnn.parameters()},
+            {'params': model.cls.parameters(), 'lr': train_opts.lr * train_opts.cls_lr_multiplier}
+            ], lr = train_opts.lr, weight_decay = train_opts.weight_decay, momentum = train_opts.momentum)
+
+    elif train_opts.optim == 'adam':
+        optimizer = torch.optim.Adam([
+            {'params': model.cnn.parameters()},
+            {'params': model.cls.parameters(), 'lr': train_opts.lr * train_opts.cls_lr_multiplier}
+            ], lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta), 
+            eps = train_opts.optim_epsilon, weight_decay = train_opts.weight_decay)
+
+    ## loss function
+    if model.opts.cls_type == 'dex':
+        crit_age = nn.NLLLoss(ignore_index = -1)
+    elif model.opts.cls_type == 'oh':
+        crit_age = misc.Ordinal_Hyperplane_Loss(relaxation = model.opts.oh_relaxation, ignore_index = -1)
+    elif model.opts.cls_type == 'reg':
+        crit_age = nn.MSELoss()
+
+    crit_age = misc.Smooth_Loss(misc.Video_Loss(crit_age))
+    meas_age = misc.Video_Age_Analysis()
+
+    ## output information
+    # json_log
+    output_dir = os.path.join('models', train_opts.id)
+    io.mkdir_if_missing(output_dir)
+    fn_info = os.path.join(output_dir, 'info.json')
+
+    info = {
+        'opts': vars(model.opts),
+        'train_opts': vars(train_opts),
+        'train_history': [],
+        'test_history': [],
+    }
+
+    def _snapshot(epoch):
+        print('saving checkpoint to %s\t' % output_dir)
+        model.save_model(os.path.join(output_dir, '%s.pth' % epoch))
+        io.save_json(info, fn_info)
+
+    # text_log
+    fout = open(os.path.join(output_dir, 'log.txt'), 'w')
+    print(opts_str, file = fout)
+
+    # pavi_log
+    if train_opts.pavi == 1:
+        pavi = PaviClient(username = 'ly015', password = '123456')
+        pavi.connect(model_name = train_opts.id, info = {'session_text': opts_str})
+
+
+    # save checkpoint if getting a best performance
+    checkbest_name = 'mae'
+    checkbest_value = sys.float_info.max
+    checkbest_epoch = -1
+
+    # main training loop
+    epoch = 0
+
+    while epoch < train_opts.max_epochs:
+
+        # set model mode
+        model.train()
+
+        # update learning rate
+        lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay))
+        optimizer.param_groups[0]['lr'] = lr
+        optimizer.param_groups[1]['lr'] = lr * train_opts.cls_lr_multiplier
+
+        # train one epoch
+        for batch_idx, data in enumerate(train_loader):
+            optimizer.zero_grad()
+
+            img_seq, seq_len, age_gt, age_std = data
+            img_seq = Variable(img_seq).cuda()
+            seq_len = Variable(seq_len).cuda()
+            age_gt = Variable(age_gt.float()).cuda()
+            age_std = age_std.float()
+
+            age_label = age_gt.round().long() - model.opts.min_age
+
+            # forward and backward
+            age_out, fc_out = model.forward_video(img_seq, seq_len)
+
+            loss = crit_age(fc_out, age_label, seq_len)
+            meas_age.add(age_out, age_gt, seq_len, age_std)
+
+            loss.backward()
+
+            if train_opts.clip_grad > 0:
+                total_grad_norm = torch.nn.utils.clip_grad_norm(model.parameters(), train_opts.clip_grad)
+                if total_grad_norm > train_opts.clip_grad:
+                    print('Clip gradient: %f ==> %f' % (total_grad_norm, train_opts.clip_grad))
+
+
+            # optimize
+            optimizer.step()
+
+            # display
+            if batch_idx % train_opts.display_interval == 0:
+                loss_smooth = crit_age.smooth_loss()
+                mae_smooth = meas_age.mae()
+
+                crit_age.clear()
+                meas_age.clear()
+
+                log = '[%s] [%s] Train Epoch %d [%d/%d (%.2f%%)]   LR: %.3e   Loss: %.6f   Mae: %.2f' %\
+                        (time.ctime(), train_opts.id, epoch, batch_idx * train_loader.batch_size,
+                        len(train_loader.dataset), 100. * batch_idx / len(train_loader),
+                        lr, loss_smooth, mae_smooth)
+
+                print(log) # to screen
+                print(log, file = fout) # to log file
+
+                iteration = batch_idx + epoch * len(train_loader)
+                info['train_history'].append({
+                    'iteration': iteration,
+                    'epoch': epoch, 
+                    'loss': loss_smooth, 
+                    'mae': mae_smooth})
+
+                if train_opts.pavi == 1:
+                    pavi_outputs = {
+                        'loss_age': loss_smooth,
+                        'mae_age_upper': mae_smooth
+                    }
+                    pavi.log(phase = 'train', iter_num = iteration, outputs = pavi_outputs)
+
+        # update epoch index
+        epoch += 1
+
+        # test
+        if train_opts.test_interval > 0 and epoch % train_opts.test_interval == 0:
+            # set test model
+            model.eval()
+
+            # clear buffer
+            crit_age.clear()
+            meas_age.clear()
+
+            # set test iteration
+            test_iter = train_opts.test_iter if train_opts.test_iter > 0 else len(test_loader)
+            
+            # test
+            for batch_idx, data in enumerate(test_loader):
+
+                img_seq, seq_len, age_gt, age_std = data
+                img_seq = Variable(img_seq).cuda()
+                seq_len = Variable(seq_len).cuda()
+                age_gt = Variable(age_gt.float()).cuda()
+                age_std = age_std.float()
+
+                age_label = age_gt.round().long() - model.opts.min_age
+
+                # forward
+                age_out, fc_out = model.forward_video(img_seq, seq_len)
+
+                loss = crit_age(fc_out, age_label, seq_len)
+                meas_age.add(age_out, age_gt, seq_len, age_std)
+
+                print('\rTesting %d/%d (%.2f%%)' % (batch_idx, test_iter, 100.*batch_idx/test_iter), end = '')
+                sys.stdout.flush()
+
+                if batch_idx + 1 == test_iter:
+                    break
+            print('')
+
+            # display
+            loss = crit_age.smooth_loss()
+            mae = meas_age.mae()
+            ca3 = meas_age.ca(3)
+            ca5 = meas_age.ca(5)
+            ca10 = meas_age.ca(10)
+            lap_err = meas_age.lap_err()
+            der = meas_age.stable_der()
+            rng = meas_age.stable_range()
+
+            crit_age.clear()
+            meas_age.clear()
+
+            log = '[%s] [%s] Test Epoch %d   Loss: %.6f   Mae: %.2f\n\tCA(3): %.2f   CA(5): %.2f   CA(10): %.2f   LAP: %.4f\n\tDer: %f   Range: %f' % \
+                    (time.ctime(), train_opts.id, epoch, loss, mae, ca3, ca5, ca10, lap_err, der, rng)
+
+            print(log)
+            print(log, file = fout)
+
+            iteration = epoch * len(train_loader)
+
+            info['test_history'].append({
+                    'iteration': iteration,
+                    'epoch': epoch, 
+                    'loss': loss, 
+                    'mae': mae,
+                    'ca3': ca3,
+                    'ca5': ca5,
+                    'ca10': ca10,
+                    'lap_err': lap_err,
+                    'der': der,
+                    'range': rng
+                    })
+
+            if train_opts.pavi == 1:
+                pavi_outputs = {
+                    'loss_age': loss,
+                    'mae_age_upper': mae,
+                }
+                pavi.log(phase = 'test', iter_num = iteration, outputs = pavi_outputs)
+
+            # snapshot best
+            if info['test_history'][-1][checkbest_name] < checkbest_value:
+                checkbest_value = info['test_history'][-1][checkbest_name]
+                checkbest_epoch = epoch
+                _snapshot('best')
 
         # snapshot
         if train_opts.snapshot_interval > 0 and epoch % train_opts.snapshot_interval == 0:
@@ -491,7 +775,13 @@ def train_model(model, train_opts):
 
     # final snapshot
     _snapshot(epoch = 'final')
+
+    log = 'best performance: epoch %d' % checkbest_epoch
+    print(log)
+    print(log, file = fout)
     fout.close()
+
+
 
 def test_model(model, test_opts):
 
@@ -574,8 +864,6 @@ def test_model(model, test_opts):
         rst = {s['id']:{'age': a} for s, a in zip(test_dset.sample_lst, age_pred)}
         io.save_data(rst, fn_rst)
 
-
-
 def test_model_video(model, test_opts):
 
     print('[AgeModel.test_video] test options: %s' % test_opts)
@@ -590,7 +878,7 @@ def test_model_video(model, test_opts):
     test_loader = torch.utils.data.DataLoader(test_dset, batch_size = test_opts.batch_size, num_workers = 4)
 
     # metrics
-    meas = misc.Video_Age_Analysis()
+    meas_age = misc.Video_Age_Analysis()
 
     age_pred = []
 
@@ -605,7 +893,7 @@ def test_model_video(model, test_opts):
         # forward
         age_out, _ = model.forward_video(img_seq, seq_len)
 
-        meas.add(age_out, age_gt, seq_len, age_std)
+        meas_age.add(age_out, age_gt, seq_len, age_std)
 
         if test_opts.output_rst == 1:
             for i, l in enumerate(seq_len):
@@ -620,13 +908,13 @@ def test_model_video(model, test_opts):
     info = {
         'test_opts': vars(test_opts),
         'test_result': {
-            'mae': meas.mae(),
-            'ca3': meas.ca(3),
-            'ca5': meas.ca(5),
-            'ca10': meas.ca(10),
-            'lap_err': meas.lap_err(),
-            'der': meas.stable_der(),
-            'range': meas.stable_range()
+            'mae': meas_age.mae(),
+            'ca3': meas_age.ca(3),
+            'ca5': meas_age.ca(5),
+            'ca10': meas_age.ca(10),
+            'lap_err': meas_age.lap_err(),
+            'der': meas_age.stable_der(),
+            'range': meas_age.stable_range()
         }
     }
 
@@ -658,21 +946,24 @@ def test_model_video(model, test_opts):
         io.save_data(rst, fn_rst)
 
 
-
 if __name__ == '__main__':
 
     command = opt_parser.parse_command()
 
-    if command == 'train':
+    if command == 'train' or command == 'train_video':
         model_opts = opt_parser.parse_opts_age_model()
         train_opts = opt_parser.parse_opts_train()
         os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in train_opts.gpu_id])
 
         model = AgeModel(opts = model_opts)
-        train_model(model, train_opts)
+
+        if command == 'train':
+            train_model(model, train_opts)
+        else:
+            train_model_video(model, train_opts)
 
 
-    elif command == 'finetune':
+    elif command == 'finetune' or command == 'finetune_video':
         model_opts = opt_parser.parse_opts_age_model()
         train_opts = opt_parser.parse_opts_train()
         os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in train_opts.gpu_id])
@@ -692,7 +983,11 @@ if __name__ == '__main__':
             fn = None
 
         model = AgeModel(opts = model_opts, fn = fn, fn_cnn = fn_cnn)
-        train_model(model, train_opts)
+
+        if command == 'finetune':
+            train_model(model, train_opts)
+        else:
+            train_model_video(model, train_opts)
 
     elif command == 'test':
         test_opts = opt_parser.parse_opts_test()

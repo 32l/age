@@ -115,6 +115,11 @@ def add_tag(im, tag_list, color_list = None):
 
 # all boxes are [xmin, ymin, xmax, ymax] format, 0-indexed, including xmax and ymax
 def compute_iou(boxes, target):
+    if isinstance(boxes, list):
+        boxes = np.array(boxes)
+    if isinstance(target, list):
+        target = np.array(target)
+
     assert(target.ndim == 1 and boxes.ndim == 2)
     A_boxes = (boxes[:, 2] - boxes[:, 0] + 1) * (boxes[:, 3] - boxes[:, 1] + 1)
     A_target = (target[2] - target[0] + 1) * (target[3] - target[1] + 1)

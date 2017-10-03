@@ -1,3 +1,7 @@
+import torch
+import torch.utils.data as data
+from torchvision import transforms
+
 import util.io as io
 
 import os
@@ -6,10 +10,6 @@ import collections
 import numpy as np
 import time
 from PIL import Image
-
-import torch
-import torch.utils.data as data
-from torchvision import transforms
 
 
 ## helper function ##
@@ -83,11 +83,10 @@ def load_age_dataset(dset_name, subset = 'train', alignment = 'none', crop_size 
 
         argv['age_std'] = True
 
-        if subset == 'train':
-            sample_lst_fn = './datasets/video_age/Labels/v1.0_image_train.json'
+        sample_lst_fn = './datasets/video_age/Labels/v2.0_image_%s.json' % subset
+        if subset.startswith('train'):
             transform = StandardFaceTransform(flip = True, crop_size = crop_size)
         elif subset == 'test':
-            sample_lst_fn = './datasets/video_age/Labels/v1.0_image_test.json'
             transform = StandardFaceTransform(flip = False, crop_size = crop_size)
 
         img_root = './'
@@ -99,17 +98,25 @@ def load_age_dataset(dset_name, subset = 'train', alignment = 'none', crop_size 
     return Image_Age_Dataset(img_root = img_root, sample_lst_fn = sample_lst_fn, 
             transform = transform, **argv)
 
-def load_video_age_dataset(version = '1.0', subset = 'test', crop_size = 128, **argv):
+
+def load_video_age_dataset(version = '2.0', subset = 'test', split = '', crop_size = 128, **argv):
 
     if version == '1.0':
         age_fn = 'datasets/video_age/Labels/v1.0_age.json'
         video_fn = 'datasets/video_age/Labels/v1.0_video.json'
         split_fn = 'datasets/video_age/Labels/v1.0_split.json'
+    if version == '2.0':
+        age_fn = 'datasets/video_age/Labels/v2.0_age.json'
+        video_fn = 'datasets/video_age/Labels/v2.0_video.json'
+        split_fn = 'datasets/video_age/Labels/v2.0_split.json'
     else:
         raise Exception('Invalid version of video_age dataset: %s' % version)
 
     if subset == 'train':
         transform = StandardFaceTransform(flip = True, crop_size = crop_size)
+        if split != '':
+            subset = 'train_' + split
+
     else:
         transform = StandardFaceTransform(flip = False, crop_size = crop_size)
 
@@ -166,7 +173,6 @@ def load_attribute_dataset(dset_name, subset = 'train', alignment = 'none', crop
     return Attribute_Dataset(img_root = img_root, sample_lst_fn = sample_lst_fn, attr_name_fn = attr_name_fn,
         transform = transform, debug = debug)
 
-
 class StandardFaceTransform(object):
     '''
     Standard transformation for face image. 
@@ -216,7 +222,6 @@ class StandardFaceTransform(object):
         img = self.post_transform(img)
 
         return img
-
 
 
 class Image_Age_Dataset(data.Dataset):
@@ -395,7 +400,7 @@ class Attribute_Dataset(data.Dataset):
 class Video_Age_Dataset(data.Dataset):
     def __init__(self, subset, age_fn, video_fn, split_fn, mode = 'video', max_len = 17, age_rng = None, transform = None, debug = 0):
         '''
-        subset: train | test
+        subset: train, train_0.1, train_0.2, train_0.5, test
         '''
         
         split = io.load_json(split_fn)
@@ -437,10 +442,10 @@ class Video_Age_Dataset(data.Dataset):
 
         age = self.age_lst[index]['age']
         std = self.age_lst[index]['std']
-        seq_len = len(self.video_lst[index]['frames'])
+        seq_len = min(self.max_len, len(self.video_lst[index]['frames']))
 
         img_seq = []
-        for f in self.video_lst[index]['frames']:
+        for f in self.video_lst[index]['frames'][0:seq_len]:
             img = Image.open(f['image']).convert('RGB')
             img = self.transform(img)
             img_seq.append(img)
@@ -453,9 +458,5 @@ class Video_Age_Dataset(data.Dataset):
 
             img_seq = torch.cat((img_seq, torch.zeros(pad_sz)))
         
-        elif img_seq.size(0) > self.max_len:
-            img_seq = img_seq[0:self.max_len,:]
-
         return img_seq, seq_len, age, std
-
 

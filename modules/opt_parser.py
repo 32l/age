@@ -7,7 +7,7 @@ def parse_command():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('command', type = str, default = 'help',
-        choices = ['train', 'test', 'finetune', 'test_video', 'help'], help = 'valid commands: train, test, help')
+        choices = ['train', 'test', 'finetune','train_video', 'finetune_video', 'test_video', 'help'], help = 'valid commands: train, test, help')
 
     command = parser.parse_known_args()[0].command
 
@@ -162,16 +162,15 @@ def parse_opts_train():
 
     parser.add_argument('--debug', type = int, default = 0,
         help = 'use a small set of data to debug model')
+
+    parser.add_argument('--pavi', type = int, default = 1, choices = [0, 1],
+        help = 'use pavi log')
     
 
     # data
-    parser.add_argument('--dataset', type = str, default = 'imdb_wiki_good',
+    parser.add_argument('--dataset', type = str, default = 'video_age',
         choices = ['imdb_wiki', 'imdb_wiki_good', 'megaage', 'morph', 'lap', 'video_age'],
         help = 'dataset name [imdb_wiki|imdb_wiki_good|megaage|morph|lap|video_age]')
-
-    parser.add_argument('--dataset_version', type = str, default = '1.0',
-        choices = ['1.0'],
-        help = 'video_age dataset version')
 
     parser.add_argument('--face_alignment', type = str, default = '21',
         choices = ['3', '21', 'none'],
@@ -180,12 +179,25 @@ def parse_opts_train():
     parser.add_argument('--crop_size', type = int, default = 128,
         help = 'center crop size')
 
+    # for video age dataset
+    parser.add_argument('--dataset_version', type = str, default = '2.0',
+        choices = ['1.0', '2.0'],
+        help = 'video_age dataset version')
+
+    parser.add_argument('--train_split', type = str, default = '',
+        choices = ['0.1', '0.2', '0.5', ''],
+        help = 'video_age dataset training split')
+
+    parser.add_argument('--video_max_len', type = int, default = 17,
+        help = 'max frame number in each video sample')
+
+
     
     # optimization
     parser.add_argument('--max_epochs', type = int, default = 30,
         help = 'number of training epochs')
 
-    parser.add_argument('--batch_size', type = int, default = 128,
+    parser.add_argument('--batch_size', type = int, default = 8,
         help = 'batch size')
 
     parser.add_argument('--clip_grad', type = float, default = -1,

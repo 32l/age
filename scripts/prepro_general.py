@@ -353,8 +353,8 @@ def video_detect_face():
     import subprocess
 
     # dataset = 'YouTubeFace'
-    # dataset = 'Celebrity-1000'
-    dataset = 'COX'
+    dataset = 'Celebrity-1000'
+    # dataset = 'COX'
     # dataset = 'IJB-B'
     # dataset = 'Celebrity-1000_pose'
     # dataset = 'Celebrity-1000_long'
@@ -365,25 +365,25 @@ def video_detect_face():
     if dataset == 'YouTubeFace':
 
         clip_lst = io.load_json('datasets/video_age/Source/YouTubeFace_clip.json')
-        output_fn = 'output/video_analysis/YouTubeFace_detect.pkl'
+        output_fn = 'output/video_analysis/YouTubeFace_detect_1.pkl'
 
         # uncropped
         # img_root = '/data2/ynli/datasets/facial_video/YouTubeFaces/frame_images_DB'
 
         #cropped
-        img_root = '/data2/ynli/datasets/facial_video/YouTubeFaces/clips_cropped'
+        img_root = '/data2/ynli/datasets/facial_video/YouTubeFaces/clips_cropped_1'
         
 
     elif dataset == 'Celebrity-1000':
 
-        clip_lst = io.load_json('datasets/video_age/Source/Celebrity-1000_pose_clip.json')
-        output_fn = 'output/video_analysis/Celebrity-1000_detect.pkl'
+        clip_lst = io.load_json('datasets/video_age/Source/Celebrity-1000_pose_clip_1.json')
+        output_fn = 'output/video_analysis/Celebrity-1000_detect_1.pkl'
 
         # uncropped
         # img_root = '/data2/ynli/datasets/facial_video/Celebrity_1000/face_data'
 
         # cropped
-        img_root = '/data2/ynli/datasets/facial_video/Celebrity_1000/clips_cropped'
+        img_root = '/data2/ynli/datasets/facial_video/Celebrity_1000/clips_cropped_1'
         
     elif dataset == 'COX':
 
@@ -399,10 +399,10 @@ def video_detect_face():
 
     # create image list for SDK
     # uncropped
-    img_lst = [os.path.join(img_root, frame) for c in clip_lst for frame in c['frames']]
+    # img_lst = [os.path.join(img_root, frame) for c in clip_lst for frame in c['frames']]
 
     # cropped
-    # img_lst = [os.path.join(img_root, c['id'], os.path.basename(frame)) for c in clip_lst for frame in c['frames']]
+    img_lst = [os.path.join(img_root, c['id'], os.path.basename(frame)) for c in clip_lst for frame in c['frames']]
 
 
     for img_fn in img_lst:
@@ -413,7 +413,7 @@ def video_detect_face():
 
     # call SenseTime SDK
 
-    rst_fn = os.path.join('temp', '%s_frame_detect.txt' % dataset)
+    rst_fn = os.path.join('temp', '%s_frame_detect_1.txt' % dataset)
 
     if not os.path.isfile(rst_fn):
 
@@ -517,6 +517,7 @@ def video_crop_face():
         y_s = int(max(0, y - h * h_scale / 2.0))
     '''
 
+    #
     # YouTubeFace dataset
     # clip_lst = io.load_json('datasets/video_age/Source/YouTubeFace_clip.json')
     # img_root = 'datasets/facial_video/YouTubeFaces/frame_images_DB'
@@ -525,10 +526,28 @@ def video_crop_face():
     # w_scale = 2
     # h_scale = 2
 
+
+    # YouTubeFace dataset
+    # clip_lst = io.load_json('datasets/video_age/Source/YouTubeFace_clip.json')
+    # img_root = 'datasets/facial_video/YouTubeFaces/frame_images_DB'
+    # output_dir = 'datasets/facial_video/YouTubeFaces/clips_cropped_1'
+
+    # w_scale = 1.5
+    # h_scale = 2
+
     # Celebrity-1000
-    clip_lst = io.load_json('datasets/video_age/Source/Celebrity-1000_pose_clip.json')
+    # clip_lst = io.load_json('datasets/video_age/Source/Celebrity-1000_pose_clip_1.json')
+    # img_root = 'datasets/facial_video/Celebrity_1000/face_data'
+    # output_dir = 'datasets/facial_video/Celebrity_1000/clips_cropped_1'
+
+    # w_scale = 3
+    # h_scale = 3
+
+
+    # Celebrity-1000
+    clip_lst = io.load_json('datasets/video_age/Source/Celebrity-1000_pose_clip_1.json')
     img_root = 'datasets/facial_video/Celebrity_1000/face_data'
-    output_dir = 'datasets/facial_video/Celebrity_1000/clips_cropped'
+    output_dir = 'datasets/facial_video/Celebrity_1000/clips_cropped_1'
 
     w_scale = 3
     h_scale = 3
@@ -857,10 +876,10 @@ if __name__ == '__main__':
 
     ## image
     # image_detect_face(sys.argv[1])
-    image_align_face(sys.argv[1])
+    # image_align_face(sys.argv[1])
 
     ## video()
-    # video_detect_face()
+    video_detect_face()
     # video_crop_face()
 
     # video_analyze()

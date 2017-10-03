@@ -17,8 +17,8 @@ class Smooth_Loss():
         self.crit = crit
         self.clear()
 
-    def __call__(self, out, gt):
-        loss = self.crit(out, gt)
+    def __call__(self, out, gt, *extra_input):
+        loss = self.crit(out, gt, *extra_input)
         self.buffer.append(loss.data[0])
         self.weight_buffer.append(out.size(0))
 
@@ -30,6 +30,53 @@ class Smooth_Loss():
 
     def smooth_loss(self):
         return sum([l * w for l, w in zip(self.buffer, self.weight_buffer)]) / sum(self.weight_buffer)
+
+
+class Video_Loss():
+    '''
+    wrapper to apply image-level loss function to video data.
+    '''
+
+    def __init__(self, crit):
+        self.crit = crit
+
+    def __call__(self, out, gt, seq_len):
+        '''
+        input:
+            out: [bsz, max_seq_len, *output_sz]
+            gt : [bsz, *gt_sz]
+            seq_len: [bsz, 1]
+        '''
+
+        #### unfolding method 1 ####
+        out_unfold = []
+        gt_unfold = []
+
+        gt_sz = gt.size()[1::]
+
+        for i, l in enumerate(seq_len):
+            l = int(l.data[0])
+
+            out_unfold.append(out[i, 0:l])
+            gt_unfold.append(gt[i:(i+1)].expand(l, *gt_sz))
+
+        out_unfold = torch.cat(out_unfold)
+        gt_unfold = torch.cat(gt_unfold)
+
+
+        #### unfolding method 2 ####
+        # bsz, max_seq_len = out.size()[0:2]
+        # output_sz = out.size()[2::]
+        # gt_sz = gt.size()[1::]
+
+        # out = out.view(bsz * max_seq_len, *output_sz)
+        # gt = gt.view(bsz, 1, *gt_sz).expand(bsz, max_seq_len, *gt_sz).view(bsz * max_seq_len, *gt_sz)
+        # index = torch.LongTensor([i for i in xrange(bsz * max_seq_len) if seq_len.data[i//max_seq_len][0] > (i%max_seq_len)])
+        # out_unfold = torch.index_select(out, 0, index)
+        # gt_unfold = torch.index_select(gt, 0, index)
+
+
+        return self.crit(out_unfold, gt_unfold)
 
 
 class Loss_Buffer():
@@ -297,7 +344,6 @@ class Video_Age_Analysis():
             rng_sum += age_seq.max() - age_seq.min()
 
         return rng_sum / self.seq_len_buffer.size
-
 
 
 class MeanAP():

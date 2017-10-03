@@ -74,12 +74,12 @@ class JointModel(nn.Module):
             self.cnn_feat_size = 2048
 
         elif opts.cnn == 'vgg16':
-            net = torchvision.model.vgg16(pretrained = True)
+            net = torchvision.models.vgg16(pretrained = True)
             cnn_layers = net.features._modules
             # replace the last maxpooling layer (kernel_sz = 2, stride = 2) with a more spares one.
-            cnn_layers['30'] = nn.MaxPool2d(kernel_size = (4, 4), stride = (4, 4), padding = (1, 1))
+            cnn_layers['30'] = nn.MaxPool2d(kernel_size = (7, 7), stride = (7, 7))
             self.cnn = nn.Sequential(cnn_layers)
-            self.cnn_feat_size = 8192 #(512 * 4 * 4)
+            self.cnn_feat_size = 2048 #(512 * 2 * 2)
 
         else:
             raise Exception('invalid cnn type %s' % opts.cnn)
