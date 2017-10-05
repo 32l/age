@@ -525,7 +525,6 @@ def train_model(model, train_opts):
 
 
 
-
 def train_model_video(model, train_opts):
 
     if not train_opts.id.startswith('age_'):
@@ -644,13 +643,12 @@ def train_model_video(model, train_opts):
 
             loss.backward()
 
+            # optimize
             if train_opts.clip_grad > 0:
                 total_grad_norm = torch.nn.utils.clip_grad_norm(model.parameters(), train_opts.clip_grad)
                 if total_grad_norm > train_opts.clip_grad:
                     print('Clip gradient: %f ==> %f' % (total_grad_norm, train_opts.clip_grad))
 
-
-            # optimize
             optimizer.step()
 
             # display
@@ -760,6 +758,7 @@ def train_model_video(model, train_opts):
                 pavi_outputs = {
                     'loss_age': loss,
                     'mae_age_upper': mae,
+                    'der_age_upper': der
                 }
                 pavi.log(phase = 'test', iter_num = iteration, outputs = pavi_outputs)
 
@@ -989,7 +988,7 @@ if __name__ == '__main__':
         else:
             train_model_video(model, train_opts)
 
-    elif command == 'test':
+    elif command == 'test' or command == 'test_video':
         test_opts = opt_parser.parse_opts_test()
         os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in test_opts.gpu_id])
 
@@ -999,19 +998,11 @@ if __name__ == '__main__':
             fn = os.path.join('models', test_opts.id, 'final.pth')
 
         model = AgeModel(fn = fn)
-        test_model(model, test_opts)
 
-    elif command == 'test_video':
-        test_opts = opt_parser.parse_opts_test()
-        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in test_opts.gpu_id])
-
-        if test_opts.id.endswith('.pth'):
-            fn = test_opts.id
+        if command == 'test':
+            test_model(model, test_opts)
         else:
-            fn = os.path.join('models', test_opts.id, 'final.pth')
-
-        model = AgeModel(fn = fn)
-        test_model_video(model, test_opts)
+            test_model_video(model, test_opts)
 
     else:
         raise Exception('invalid command "%s"' % command)

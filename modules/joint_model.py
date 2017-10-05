@@ -2,17 +2,17 @@
 
 from __future__ import division, print_function
 
-import util.io as io
-from util.pavi import PaviClient
-import dataset
-import misc
-import opt_parser
-
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import torch.nn.functional as F
 import torchvision
+
+import util.io as io
+from util.pavi import PaviClient
+import dataset
+import misc
+import opt_parser
 
 import os
 import sys
@@ -162,6 +162,14 @@ class JointModel(nn.Module):
             if opts.attr_cls == 1:
                 self._init_weight(self.attr_cls)
 
+        # set perturbation optsion
+        self.perburb_opts = {
+            'enable': False,
+            'guide_signal': 'pose',
+            'guide_index': 0,
+            'scale': 0.01,
+        }
+
 
     def _init_weight(self, model = None, mode = 'xavier'):
 
@@ -226,17 +234,24 @@ class JointModel(nn.Module):
             self._init_weight(self.age_cls)
             
             if self.opts.num_cls_layer == 2 and \
-                model_info['opts']['num_cls_layer'] == 2 and \
-                self.opts.cls_mid_size == model_info['opts']['cls_mid_size']:
+                model_info['opts'].num_cls_layer == 2 and \
+                self.opts.cls_mid_size == model_info['opts'].cls_mid_size:
 
                 # load the first layer in age cls
-                self.age_cls.embed.weights.data.copy_(model_info['state_dict_age_cls']['embed.weight'])
+                self.age_cls.embed.weight.data.copy_(model_info['state_dict_age_cls']['embed.weight'])
                 self.age_cls.embed.bias.data.copy_(model_info['state_dict_age_cls']['embed.bias'])
         else:
             self.age_cls.load_state_dict(model_info['state_dict_age_cls'])
 
 
-            
+    def perturb_feat(self, img_feat):
+        '''
+        attribute-guided feature perturbation
+        '''
+
+
+
+
 
 
     def forward(self, data):
@@ -329,6 +344,46 @@ class JointModel(nn.Module):
         return age_out, age_fc_out, pose_out, attr_out
 
 
+    def forward_video(self, data):
+        '''
+        Forward process. Data for age estimation task is in video format
+
+        Input:
+            data: ((img_seq_age, seq_len_age), img_pose, img_attr)
+                img_seq_age: (bsz_age, max_len, 3, 224, 224)
+                seq_len_age: (bsz_age, 1)
+                img_pose: (bsz_pose, 3, 224, 224)
+                img_attr: (bsz_attr, 3, 224, 224)
+        Output:
+            age_out: (bsz_age, max_len)
+            age_fc_out: (bsz_age, max_len, *fc_sz)
+            pose_out: (bsz_pose, pose_dim)
+            attr_out: (bsz_attr, num_attr)
+        '''
+
+        # data
+        if data[0] is not None:
+            # unfold video frames
+            img_seq_age, seq_len_age = data[0]
+            bsz_age, max_len = img_seq_age.size()[0:2]
+            img_sz = img_seq_age.size()[2::]
+
+            img_seq_age = img_seq_age.view(bsz_age*max_len, *img_sz)
+            data[0] = img_seq_age
+
+            # todo: call perturbatin function here
+
+        age_out, age_fc_out, pose_out, attr_out = self.forward(data)
+
+        if data[0] is not None:
+            age_out = age_out.view(bsz_age, max_len)
+            age_fc_out = age_fc_out.view(bsz_age, max_len, -1)
+
+
+        return age_out, age_fc_out, pose_out, attr_out
+
+
+
 
 def train_model(model, train_opts):
 
@@ -402,21 +457,21 @@ def train_model(model, train_opts):
 
     ### create optimizer
     # learnable parameters
-    learnable_params = [{'params': model.age_cls.parameters(),'lr_mult': train_opts.age_cls_multiplier}]
+    learnable_params = [{'params': model.age_cls.parameters(),'lr_mult': train_opts.cls_lr_multiplier}]
 
     if train_opts.train_cnn == 1:
         learnable_params.append({'params': model.cnn.parameters(), 'lr_mult': 1.0})
 
     if train_opts.train_embed == 1:
-        learnable_params.append({'params': model.feat_embed.parameters(), 'lr_mult': train_opts.cls_lr_multiplier})
+        learnable_params.append({'params': model.feat_embed.parameters(), 'lr_mult': train_opts.sidetask_lr_multiplier})
 
     if train_opts.train_pose == 1:
         assert model.pose_cls is not None
-        learnable_params.append({'params': model.pose_cls.parameters(), 'lr_mult': train_opts.cls_lr_multiplier})
+        learnable_params.append({'params': model.pose_cls.parameters(), 'lr_mult': train_opts.sidetask_lr_multiplier})
 
     if train_opts.train_attr == 1:
         assert model.attr_cls is not None
-        learnable_params.append({'params': model.attr_cls.parameters(), 'lr_mult': train_opts.cls_lr_multiplier})
+        learnable_params.append({'params': model.attr_cls.parameters(), 'lr_mult': train_opts.sidetask_lr_multiplier})
 
     # create optimizer
     if train_opts.optim == 'sgd':
@@ -460,8 +515,9 @@ def train_model(model, train_opts):
     }
 
     def _snapshot(epoch):
-        print('saving checkpoint to %s\t' % output_dir)
-        model.save_model(os.path.join(output_dir, '%s.pth' % epoch))
+        fn_snapshot = os.path.join(output_dir, '%s.pth' % epoch)
+        print('saving checkpoint to %s' % fn_snapshot)
+        model.save_model(fn_snapshot)
         io.save_json(info, fn_info)
 
 
@@ -471,8 +527,9 @@ def train_model(model, train_opts):
     print(opts_str, file = fout)
 
     # pavi_log
-    pavi = PaviClient(username = 'ly015', password = '123456')
-    pavi.connect(model_name = train_opts.id, info = {'session_text': opts_str})
+    if train_opts.pavi == 1:
+        pavi = PaviClient(username = 'ly015', password = '123456')
+        pavi.connect(model_name = train_opts.id, info = {'session_text': opts_str})
 
 
     ### main training loop
@@ -626,8 +683,9 @@ def train_model(model, train_opts):
                 print(log, file = fout) # to log file
 
                 info['train_history'].append(train_info)
-                pavi.log(phase = 'train', iter_num = iteration, outputs = pavi_outputs)
 
+                if train_opts.pavi == 1:                
+                    pavi.log(phase = 'train', iter_num = iteration, outputs = pavi_outputs)
 
 
         # update epoch index
@@ -786,7 +844,8 @@ def train_model(model, train_opts):
 
             info['test_history'].append(test_info)
 
-            pavi.log(phase = 'test', iter_num = iteration, outputs = pavi_outputs)
+            if train_opts.pavi == 1:
+                pavi.log(phase = 'test', iter_num = iteration, outputs = pavi_outputs)
 
         # snapshot
         if train_opts.snapshot_interval > 0 and epoch % train_opts.snapshot_interval == 0:
@@ -797,31 +856,526 @@ def train_model(model, train_opts):
     fout.close()
 
 
+def train_model_video(model, train_opts):
+    if not train_opts.id.startswith('joint_'):
+        train_opts.id = 'joint_' + train_opts.id
+
+    opts_str = opt_parser.opts_to_string([('model_opts', model.opts), ('train_opts', train_opts)])
+    print(opts_str)
+
+    ### move model to GPU
+    if torch.cuda.device_count() > 1:
+        model.cnn = nn.DataParallel(model.cnn)
+    model.cuda()
+
+
+    ### create data loader
+    # age
+    age_train_dset = dataset.load_video_age_dataset(version = train_opts.dataset_version, subset = 'train',
+        crop_size = train_opts.crop_size, age_rng = [model.opts.min_age, model.opts.max_age],
+        split = train_opts.train_split, max_len = train_opts.video_max_len)
+    age_test_dset = dataset.load_video_age_dataset(version = train_opts.dataset_version, subset = 'test',
+        crop_size = train_opts.crop_size, age_rng = [model.opts.min_age, model.opts.max_age])
+
+    age_train_loader = torch.utils.data.DataLoader(age_train_dset, batch_size = train_opts.batch_size, shuffle = True, 
+        num_workers = 4, pin_memory = True)
+    age_test_loader  = torch.utils.data.DataLoader(age_test_dset, batch_size = 32, 
+        num_workers = 4, pin_memory = True)
+
+    # pose
+    if train_opts.train_pose == 1:
+        pose_train_dset = dataset.load_pose_dataset(dset_name = 'aflw', subset = 'train', alignment = train_opts.face_alignment, 
+            debug = train_opts.debug, crop_size = train_opts.crop_size)
+        pose_test_dset = dataset.load_pose_dataset(dset_name = 'aflw', subset = 'test', alignment = train_opts.face_alignment,
+            debug = train_opts.debug, crop_size = train_opts.crop_size)
+
+        pose_train_loader = torch.utils.data.DataLoader(pose_train_dset, batch_size = train_opts.batch_size_pose, shuffle = True, 
+            num_workers = 4, pin_memory = True, drop_last = True)
+        pose_test_loader  = torch.utils.data.DataLoader(pose_test_dset, batch_size = train_opts.batch_size_pose, 
+            num_workers = 4, pin_memory = True)
+
+        pose_train_loaderiter = iter(pose_train_loader)
+    else:
+        pose_train_loader = None
+        pose_test_loader = None
+
+    # attribute
+    if train_opts.train_attr == 1:
+        attr_train_dset = dataset.load_attribute_dataset(dset_name = train_opts.attr_dataset, subset = 'train', alignment = train_opts.face_alignment, 
+            debug = train_opts.debug, crop_size = train_opts.crop_size)
+        attr_test_dset = dataset.load_attribute_dataset(dset_name = train_opts.attr_dataset, subset = 'test', alignment = train_opts.face_alignment,
+            debug = train_opts.debug, crop_size = train_opts.crop_size)
+
+        attr_train_loader = torch.utils.data.DataLoader(attr_train_dset, batch_size = train_opts.batch_size_attr, shuffle = True, 
+            num_workers = 4, pin_memory = True, drop_last = True)
+        attr_test_loader  = torch.utils.data.DataLoader(attr_test_dset, batch_size = train_opts.batch_size_attr, 
+            num_workers = 4, pin_memory = True)
+
+        attr_train_loaderiter = iter(attr_train_loader)
+    else:
+        attr_train_loader = None
+        attr_test_loader = None
+
+
+    ### create optimizer
+    # learnable parameters
+    learnable_params = [{'params': model.age_cls.parameters(),'lr_mult': train_opts.cls_lr_multiplier}]
+
+    if train_opts.train_cnn == 1:
+        learnable_params.append({'params': model.cnn.parameters(), 'lr_mult': 1.0})
+
+    if train_opts.train_embed == 1:
+        learnable_params.append({'params': model.feat_embed.parameters(), 'lr_mult': train_opts.sidetask_lr_multiplier})
+
+    if train_opts.train_pose == 1:
+        assert model.pose_cls is not None
+        learnable_params.append({'params': model.pose_cls.parameters(), 'lr_mult': train_opts.sidetask_lr_multiplier})
+
+    if train_opts.train_attr == 1:
+        assert model.attr_cls is not None
+        learnable_params.append({'params': model.attr_cls.parameters(), 'lr_mult': train_opts.sidetask_lr_multiplier})
+
+    # create optimizer
+    if train_opts.optim == 'sgd':
+        optimizer = torch.optim.SGD(learnable_params, lr = train_opts.lr, 
+            weight_decay = train_opts.weight_decay, momentum = train_opts.momentum)
+    elif train_opts.optim == 'adam':
+        optimizer = torch.optim.Adam(learnable_params, lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta), 
+            eps = train_opts.optim_epsilon, weight_decay = train_opts.weight_decay)
+
+
+    ### loss functions
+    if model.opts.cls_type == 'dex':
+        crit_age = nn.CrossEntropyLoss(ignore_index = -1)
+    elif model.opts.cls_type == 'oh':
+        crit_age = misc.Ordinal_Hyperplane_Loss(relaxation = model.opts.oh_relaxation, ignore_index = -1)
+    elif model.opts.cls_type == 'reg':
+        crit_age = nn.MSELoss()
+
+    crit_age = misc.Smooth_Loss(misc.Video_Loss(crit_age))
+    meas_age = misc.Video_Age_Analysis()
+
+    if train_opts.train_pose == 1:
+        crit_pose = misc.Smooth_Loss(nn.MSELoss())
+        meas_pose = misc.Pose_MAE(pose_dim = model.opts.pose_dim)
+
+    if train_opts.train_attr == 1:
+        crit_attr = misc.Smooth_Loss(nn.BCELoss())
+        meas_attr = misc.MeanAP()
+
+    ### output training information
+    # json_log
+    output_dir = os.path.join('models', train_opts.id)
+    io.mkdir_if_missing(output_dir)
+    fn_info = os.path.join(output_dir, 'info.json')
+
+    info = {
+        'opts': vars(model.opts),
+        'train_opts': vars(train_opts),
+        'train_history': [],
+        'test_history': [],
+    }
+
+    def _snapshot(epoch):
+        fn_snapshot = os.path.join(output_dir, '%s.pth' % epoch)
+        print('saving checkpoint to %s' % fn_snapshot)
+        model.save_model(fn_snapshot)
+        io.save_json(info, fn_info)
+
+
+    # text_log
+    fn_log = os.path.join(output_dir, 'log.txt')
+    fout = open(fn_log, 'w')
+    print(opts_str, file = fout)
+
+    # pavi_log
+    if train_opts.pavi == 1:
+        pavi = PaviClient(username = 'ly015', password = '123456')
+        pavi.connect(model_name = train_opts.id, info = {'session_text': opts_str})
+
+
+    # save checkpoint if getting a best performance
+    checkbest_name = 'mae_age'
+    checkbest_value = sys.float_info.max
+    checkbest_epoch = -1
+
+    # main training loop
+    epoch = 0
+
+    while epoch < train_opts.max_epochs:
+
+        # set model mode
+        model.train()
+
+        # update learning rate
+        lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay))
+        for i in xrange(len(optimizer.param_groups)):
+            optimizer.param_groups[i]['lr'] = lr * optimizer.param_groups[i]['lr_mult']
+
+        # train one epoch
+        for batch_idx, age_data in enumerate(age_train_loader):
+            optimizer.zero_grad()
+
+            # get age data
+            img_seq_age, seq_len_age, age_gt, age_std = age_data
+            img_seq_age = Variable(img_seq_age).cuda()
+            seq_len_age = Variable(seq_len_age).cuda()
+            age_gt = Variable(age_gt.float()).cuda()
+            age_std = age_std.float()
+            age_label = age_gt.round().long() - model.opts.min_age
+
+            # get pose data
+            if train_opts.train_pose == 1:
+                try:
+                    img_pose, pose_gt = pose_train_loaderiter.next()
+                except StopIteration:
+                    pose_train_loaderiter = iter(pose_train_loader)
+                    img_pose, pose_gt = pose_train_loaderiter.next()
+
+                img_pose = Variable(img_pose).cuda()    
+                pose_gt = Variable(pose_gt[:,0:model.opts.pose_dim].float()).cuda()
+            else:
+                img_pose = None
+
+            # get attr data
+            if train_opts.train_attr == 1:
+                try:
+                    img_attr, attr_gt = attr_train_loaderiter.next()
+                except StopIteration:
+                    attr_train_loaderiter = iter(attr_train_loader)
+                    img_attr, attr_gt = attr_train_loaderiter.next()
+
+                img_attr = Variable(img_attr).cuda()
+                attr_gt = Variable(attr_gt.float()).cuda()
+            else:
+                img_attr = None
+
+            data = [(img_seq_age, seq_len_age), img_pose, img_attr]
+
+
+            # forward
+            age_out, age_fc_out, pose_out, attr_out = model.forward_video(data)
+
+
+            # compute loss
+            loss = crit_age(age_fc_out, age_label, seq_len_age) * train_opts.loss_weight_age
+            meas_age.add(age_out, age_gt, seq_len_age, age_std)
+
+            if train_opts.train_pose == 1:
+                loss += crit_pose(pose_out, pose_gt) * train_opts.loss_weight_pose
+                meas_pose.add(pose_out, pose_gt)
+
+            if train_opts.train_attr == 1:
+                loss += crit_attr(attr_out, attr_gt) * train_opts.loss_weight_attr
+                # don't compute attribute meanAP on training set
+                # meas_attr.add(attr_out, attr_gt)
+
+            # backward
+            loss.backward()
+
+            
+            # optimize
+            if train_opts.clip_grad > 0:
+                total_grad_norm = torch.nn.utils.clip_grad_norm(model.parameters(), train_opts.clip_grad)
+                if total_grad_norm > train_opts.clip_grad:
+                    print('Clip gradient: %f ==> %f' % (total_grad_norm, train_opts.clip_grad))
+
+            optimizer.step()
+
+            # display
+            if batch_idx % train_opts.display_interval == 0:
+                iteration = batch_idx + epoch * len(age_train_loader)
+
+                loss_age = crit_age.smooth_loss()
+                mae_age = meas_age.mae()
+
+                crit_age.clear()
+                meas_age.clear()
+
+                log = '[%s] [%s] Train Epoch %d [%d/%d (%.2f%%)]   LR: %.3e   GPU: %s' %\
+                        (time.ctime(), train_opts.id, epoch, batch_idx * age_train_loader.batch_size,
+                        len(age_train_loader.dataset), 100. * batch_idx / len(age_train_loader), lr, train_opts.gpu_id)
+                
+                log_age = '[Age]   Loss: %.6f (weight: %.0e)   Mae: %.2f' % (loss_age, train_opts.loss_weight_age, mae_age)
+                log = log + '\n\t' + log_age
+                
+                train_info = {
+                    'iteration': iteration,
+                    'epoch': epoch,
+                    'loss_age': loss_age, 
+                    'mae_age': mae_age
+                }
+
+                pavi_outputs = {
+                    'loss_age': loss_age,
+                    'mae_age_upper': mae_age,
+                }
+
+                
+                if train_opts.train_pose:
+
+                    loss_pose = crit_pose.smooth_loss()
+                    mae_pose = meas_pose.mae().tolist()
+
+                    crit_pose.clear()
+                    meas_pose.clear()
+
+                    log_pose = '[Pose]   Loss: %.6f (weight: %.0e)  Details:' % (loss_pose, train_opts.loss_weight_pose)
+
+                    for i in range(model.opts.pose_dim):
+                        log_pose += '[%s: %.2f]' % (['yaw', 'pitch', 'roll'][i], mae_pose[i])
+
+                    log = log + '\n\t' + log_pose
+
+                    train_info['loss_pose'] = loss_pose
+                    train_info['mae_pose'] = mae_pose
+
+                    pavi_outputs['loss_pose'] = loss_pose
+                    for i in range(model.opts.pose_dim):
+                        pavi_outputs['mae_pose_%s_upper' % ['yaw', 'pitch', 'roll'][i]] = mae_pose[i]
+
+
+                if train_opts.train_attr:
+                    loss_attr = crit_attr.smooth_loss()
+                    crit_attr.clear()
+
+                    log_attr = '[Attribute]   Loss: %.6f (weight: %.0e)' % (loss_attr, train_opts.loss_weight_attr)
+                    log = log + '\n\t' + log_attr
+
+                    train_info['loss_attr'] = loss_attr
+                    pavi_outputs['loss_attr'] = loss_attr
+
+                print(log) # to screen
+                print(log, file = fout) # to log file
+
+                info['train_history'].append(train_info)
+
+                if train_opts.pavi == 1:
+                    pavi.log(phase = 'train', iter_num = iteration, outputs = pavi_outputs)
+
+        # update epoch index
+        epoch += 1
+
+        # test
+        if train_opts.test_interval > 0 and epoch % train_opts.test_interval == 0:
+            ## test age, pose, attribute respectively
+            iteration = epoch * len(age_train_loader)
+
+            ## set test mode
+            model.eval()
+
+            ## test age
+            crit_age.clear()
+            meas_age.clear()
+
+            for batch_idx, age_data in enumerate(age_test_loader):
+                
+                img_seq_age, seq_len_age, age_gt, age_std = age_data
+                img_seq_age = Variable(img_seq_age).cuda()
+                seq_len_age = Variable(seq_len_age).cuda()
+                age_gt = Variable(age_gt.float()).cuda()
+                age_std = age_std.float()
+                age_label = age_gt.round().long() - model.opts.min_age
+
+                data = [(img_seq_age, seq_len_age), None, None]
+
+                age_out, age_fc_out, _, _ = model.forward_video(data)
+
+                loss = crit_age(age_fc_out, age_label, seq_len_age)
+                meas_age.add(age_out, age_gt, seq_len_age, age_std)
+
+
+                print('\r Testing Age %d/%d (%.2f%%)' % (batch_idx, len(age_test_loader), 100.*batch_idx/len(age_test_loader)), end = '')
+            print('\n')
+
+            # display
+            loss_age = crit_age.smooth_loss()
+            mae_age = meas_age.mae()
+            ca3 = meas_age.ca(3)
+            ca5 = meas_age.ca(5)
+            ca10 = meas_age.ca(10)
+            lap_err = meas_age.lap_err()
+            der = meas_age.stable_der()
+            rng = meas_age.stable_range()
+
+            crit_age.clear()
+            meas_age.clear()
+
+            log = '[%s] [%s] Test Epoch %d' % (time.ctime(), train_opts.id, epoch)
+
+            log_age = '[Age]   Loss: %.6f (weight: %.0e)   Mae: %.2f\n\tCA(3): %.2f   CA(5): %.2f   CA(10): %.2f   LAP: %.4f\n\tDer: %f   Range: %f' % \
+                    (loss_age, train_opts.loss_weight_age, mae_age, ca3, ca5, ca10, lap_err, der, rng)
+
+            log = log + '\n\t' + log_age
+
+            test_info = {
+                'iteration': iteration,
+                'epoch': epoch,
+                'loss_age': loss_age,
+                'mae_age': mae_age,
+                'ca3': ca3,
+                'ca5': ca5,
+                'ca10': ca10,
+                'lap_err': lap_err,
+                'der': der,
+                'rng': rng
+            }
+
+            pavi_outputs = {
+                'loss_age': loss_age,
+                'mae_age_upper': mae_age,
+                'der_age_upper': der,
+            }
+
+            ## test pose
+            if train_opts.train_pose:
+                crit_pose.clear()
+                meas_pose.clear()
+
+                for batch_idx, pose_data in enumerate(pose_test_loader):
+                    img_pose, pose_gt = pose_data
+                    img_pose = Variable(img_pose).cuda()
+                    pose_gt = Variable(pose_gt[:,0:model.opts.pose_dim].float()).cuda()
+                    data = [_, img_pose, _]
+
+                    _, _, pose_out, _ = model.forward(data)
+
+                    loss = crit_pose(pose_out, pose_gt)
+                    meas_pose.add(pose_out, pose_gt)
+                    print('\r Testing Pose %d/%d (%.2f%%)' % (batch_idx, len(pose_test_loader), 100.*batch_idx/len(pose_test_loader)), end = '')
+                print('\n')
+
+                loss_pose = crit_pose.smooth_loss()
+                mae_pose = meas_pose.mae().tolist()
+
+                crit_pose.clear()
+                meas_pose.clear()
+
+                log_pose = '[Pose]   Loss: %.6f   Details:' % loss_pose
+                for i in range(model.opts.pose_dim):
+                        log_pose += '[%s: %.2f]' % (['yaw', 'pitch', 'roll'][i], mae_pose[i])
+
+                log = log + '\n\t' + log_pose
+
+                test_info['loss_pose'] = loss_pose
+                test_info['mae_pose'] = mae_pose
+
+                pavi_outputs['loss_pose'] = loss_pose
+                for i in range(model.opts.pose_dim):
+                    pavi_outputs['mae_pose_%s_upper' % ['yaw', 'pitch', 'roll'][i]] = mae_pose[i]
+
+            ## test attribute
+            if train_opts.train_attr:
+                crit_attr.clear()
+                meas_attr.clear()
+
+                for batch_idx, attr_data in enumerate(attr_test_loader):
+                    img_attr, attr_gt = attr_data
+                    img_attr = Variable(img_attr).cuda()
+                    attr_gt = Variable(attr_gt.float()).cuda()
+                    data = [_, _, img_attr]
+
+                    _, _, _, attr_out = model.forward(data)
+
+                    loss = crit_attr(attr_out, attr_gt)
+                    meas_attr.add(attr_out, attr_gt)
+                    print('\r Testing Attribute %d/%d (%.2f%%)' % (batch_idx, len(attr_test_loader), 100.*batch_idx/len(attr_test_loader)), end = '')
+                print('\n')
+
+                loss_attr = crit_attr.smooth_loss()
+                mean_ap_attr, ap_attr = meas_attr.compute_mean_ap()
+                mean_ap_pn_attr, ap_pn_attr = meas_attr.compute_mean_ap_pn()
+
+                crit_attr.clear()
+                meas_attr.clear()
+
+                log_attr = '[Attribute]   Loss: %.6f   MeanAP: %.2f   MeanAP_PN: %.2f' % \
+                    (loss_attr, mean_ap_attr, mean_ap_pn_attr)
+
+                log_attr_details = '\n'.join(['%-20s   AP: %.2f   AP_PN: %.2f' % (attr_name, ap, ap_pn) for 
+                    (attr_name, ap, ap_pn) in zip(model.attr_name_lst, ap_attr, ap_pn_attr)])
+
+                log = log + '\n\t' + log_attr + '\n\n' + log_attr_details
+
+                test_info['loss_attr'] = loss_attr
+                test_info['mean_ap_attr'] = mean_ap_attr.tolist()
+                test_info['ap_attr'] = ap_attr.tolist()
+                test_info['mean_ap_pn_attr'] = mean_ap_pn_attr.tolist()
+                test_info['ap_pn_attr'] = ap_pn_attr.tolist()
+
+                pavi_outputs['loss_attr'] = loss_attr
+                pavi_outputs['mean_ap_attr_upper'] = mean_ap_attr.tolist()
+
+
+            print(log)
+            print(log, file = fout)
+
+            info['test_history'].append(test_info)
+
+            if train_opts.pavi == 1:
+                pavi.log(phase = 'test', iter_num = iteration, outputs = pavi_outputs)
+
+
+            # snapshot best
+            if info['test_history'][-1][checkbest_name] < checkbest_value:
+                checkbest_value = info['test_history'][-1][checkbest_name]
+                checkbest_epoch = epoch
+                _snapshot('best')
+
+        # snapshot
+        if train_opts.snapshot_interval > 0 and epoch % train_opts.snapshot_interval == 0:
+            _snapshot(epoch)
+
+    # final snapshot
+    _snapshot(epoch = 'final')
+
+    log = 'best performance: epoch %d' % checkbest_epoch
+    print(log)
+    print(log, file = fout)
+    fout.close()
+
 
 
 if __name__ == '__main__':
 
     command = opt_parser.parse_command()
 
-    if command == 'train':
+    if command == 'train' or command == 'train_video':
         model_opts = opt_parser.parse_opts_joint_model()
         train_opts = opt_parser.parse_opts_train()
         os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in train_opts.gpu_id])
 
         model = JointModel(opts = model_opts)
-        train_model(model, train_opts)
 
-    elif command == 'finetune':
+        if command == 'train':
+            train_model(model, train_opts)
+        else:
+            train_model_video(model, train_opts)
+
+    elif command == 'finetune' or command == 'finetune_video':
         model_opts = opt_parser.parse_opts_joint_model()
         train_opts = opt_parser.parse_opts_train()
         os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in train_opts.gpu_id])
 
-        assert len(train_opts.pre_id) > 0, 'train_opts.pre_id not set'
+        assert len(train_opts.pre_id) >= 2, 'train_opts.pre_id not set'
 
-        if not train_opts.pre_id[0].endswith('.pth'):
-            fn = os.path.join('models', train_opts.pre_id[0], 'final.pth')
+        if not train_opts.pre_id[1].endswith('.pth'):
+            fn = os.path.join('models', train_opts.pre_id[1], 'final.pth')
         else:
-            fn = train_opts.pre_id[0]
+            fn = train_opts.pre_id[1]
 
+        if train_opts.only_load_cnn == 0:
+            fn_cnn = None
+        else:
+            fn_cnn = fn
+            fn = None
 
+        model = JointModel(model_opts, fn = fn, fn_cnn = fn_cnn)
 
+        if command == 'finetune':
+            train_model(model, train_opts)
+        else:
+            train_model_video(model, train_opts)
+
+    else:
+        raise Exception('invalid command "%s"' % command)

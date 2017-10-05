@@ -26,7 +26,7 @@ def parse_opts_joint_model():
     parser.add_argument('--num_cls_layer', type = int, default = 2, choices = [1,2],
         help = 'number of fc layers in classifiers (inlcuding age, pose and attribute)')
 
-    parser.add_argument('--cls_mid_size', type = int, default = 256, 
+    parser.add_argument('--cls_mid_size', type = int, default = 128, 
         help = 'middle fc layer output size of classifiers')
 
     parser.add_argument('--dropout', type = float, default = 0,
@@ -36,7 +36,7 @@ def parse_opts_joint_model():
     parser.add_argument('--min_age', type = int, default = 0,
         help = 'min age')
 
-    parser.add_argument('--max_age', type = int, default = 100,
+    parser.add_argument('--max_age', type = int, default = 70,
         help = 'max age')
 
     parser.add_argument('--cls_type', type = str, default = 'oh', choices = ['oh', 'dex'],
@@ -50,7 +50,7 @@ def parse_opts_joint_model():
     parser.add_argument('--pose_cls', type = int, default = 1, choices = [0, 1],
         help = 'whether has pose classifier [0-no | 1-yes]')
 
-    parser.add_argument('--pose_dim', type = int, default = 1, choices = [1, 2],
+    parser.add_argument('--pose_dim', type = int, default = 2, choices = [1, 2],
         help = 'number of pose axes [1-only yaw | 2-yaw and pitch]')
 
 
@@ -197,7 +197,7 @@ def parse_opts_train():
     parser.add_argument('--max_epochs', type = int, default = 30,
         help = 'number of training epochs')
 
-    parser.add_argument('--batch_size', type = int, default = 8,
+    parser.add_argument('--batch_size', type = int, default = 32,
         help = 'batch size')
 
     parser.add_argument('--clip_grad', type = float, default = -1,
@@ -253,7 +253,7 @@ def parse_opts_train():
 
 
     # finetune
-    parser.add_argument('--pre_id', type = str, default = ['models/age_pre_2.2/9.pth'], nargs = '*',
+    parser.add_argument('--pre_id', type = str, default = ['models/age_pre_2.2/9.pth', 'models/joint_1.13/23.pth'], nargs = '*',
         help = 'the list of pretrained model IDs (or model files if end with ".pth")')
 
     parser.add_argument('--only_load_cnn', type = int, default = 1, choices = [0, 1],
@@ -281,8 +281,14 @@ def parse_opts_train():
     parser.add_argument('--loss_weight_attr', type = float, default = 10,
         help = 'attribute loss weight')
 
-    parser.add_argument('--age_cls_multiplier', type = float, default = 10,
-        help = 'learning rate multiplier of the age classifier layers')
+    parser.add_argument('--batch_size_pose', type = int, default = 128,
+        help = 'pose sample batch size')
+
+    parser.add_argument('--batch_size_attr', type = int, default = 128,
+        help = 'attribute sample batch size')
+
+    parser.add_argument('--sidetask_lr_multiplier', type = float, default = 1.0,
+        help = 'learning rate multiplier of layers: feat_embed, pose_cls, attr_cls')
 
     parser.add_argument('--attr_dataset', type = str, default = 'celeba',
         choices = ['celeba', 'celeba_selc1'],
