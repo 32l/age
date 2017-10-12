@@ -23,6 +23,17 @@ import time
 
 class JointModel(nn.Module):
 
+    def _update_opts(self, opts):
+        '''
+        update old version of model options
+        '''
+
+        if 'attr_share_fc' not in opts:
+            opts.attr_share_fc = 0
+
+
+        return opts
+
     def __init__(self, opts = None, fn = None, fn_cnn = None):
         '''
         Create an age model. Input should be one of following combinations:
@@ -54,7 +65,8 @@ class JointModel(nn.Module):
 
         if fn:
             opts = torch.load(fn, map_location=lambda storage, loc: storage)['opts']
-        
+            opts = self._update_opts(opts)
+
         self.opts = opts
 
         ## create model
@@ -134,8 +146,14 @@ class JointModel(nn.Module):
             if opts.num_cls_layer == 1:
                 self.attr_cls = nn.Linear(self.feat_size, opts.num_attr)
             elif opts.num_cls_layer == 2:
+                if opts.attr_share_fc == 1:
+                    assert opts.pose_cls == 1
+                    embed = self.pose_cls.embed
+                else:
+                    embed = nn.Linear(self.feat_size, opts.cls_mid_size, bias = True)
+
                 self.attr_cls = nn.Sequential(OrderedDict([
-                    ('embed', nn.Linear(self.feat_size, opts.cls_mid_size, bias = True)),
+                    ('embed', embed),
                     ('relu', nn.ReLU()),
                     ('dropout', nn.Dropout(p = opts.dropout)),
                     ('cls', nn.Linear(opts.cls_mid_size, opts.num_attr, bias = True))
@@ -163,13 +181,20 @@ class JointModel(nn.Module):
                 self._init_weight(self.attr_cls)
 
         # set perturbation optsion
-        self.perburb_opts = {
-            'enable': False,
-            'guide_signal': 'pose',
-            'guide_index': 0,
-            'scale': 0.01,
-        }
+        # options:
+        #     enable (bool): enable feature perturbation
+        #     mode(str):
+        #         'age_embed_L2'
+        #         'age_embed_cos'
 
+        self.pert_opts = {
+            'enable': False,
+            'mode': None, #'age_embed_L2'
+            'guide_signal': None, #'pose'
+            'guide_index': None, # 0
+            'scale': None, # 0.1
+            'debug': False,
+        }
 
     def _init_weight(self, model = None, mode = 'xavier'):
 
@@ -186,7 +211,6 @@ class JointModel(nn.Module):
                             nn.init.normal(p.data, 0, 0.01)
                     elif p_name == 'bias':
                         nn.init.constant(p.data, 0)
-
 
     def _get_state_dict(self, model):
         
@@ -244,17 +268,180 @@ class JointModel(nn.Module):
             self.age_cls.load_state_dict(model_info['state_dict_age_cls'])
 
 
-    def perturb_feat(self, img_feat):
+    def _compute_age(self, feat_relu):
+        '''
+        input:
+            feat: output of feat_embed layer (after relu)
+        output:
+            age_out
+            age_fc_out
+        '''
+        age_fc_out = self.age_cls(feat_relu)
+
+        if self.opts.cls_type == 'dex':
+            # deep expectation
+            age_scale = np.arange(self.opts.min_age, self.opts.max_age + 1, 1.0)
+            age_scale = Variable(age_fc_out.data.new(age_scale)).unsqueeze(1)
+            
+            age_out = torch.matmul(F.softmax(age_fc_out), age_scale).view(-1)
+            
+        elif self.opts.cls_type == 'oh':
+            # ordinal hyperplane
+            age_fc_out = F.sigmoid(age_fc_out)
+            age_out = age_fc_out.sum(dim = 1) + self.opts.min_age
+
+        elif self.opts.cls_type == 'reg':
+            # regression
+            age_out = self.age_fc_out.view(-1) + self.opts.min_age
+
+        return age_out, age_fc_out
+
+
+    def perturb_feat(self, feat):
         '''
         attribute-guided feature perturbation
+        input:
+            feat: output of feat_embed layer (before relu)
+        output:
+            feat_pert: same size as feat
         '''
+        opts = self.pert_opts
+
+        if opts['guide_signal'] == 'pose':
+            guide_cls = self.pose_cls
+        elif opts['guide_signal'] == 'attr':
+            guide_cls = self.attr_cls
 
 
+        # compute guide signal
+        feat = feat.detach()
+        feat.requires_grad = True
+        
+        feat = feat.clone()
+        feat.retain_grad()
+
+        feat_relu = self.relu(feat)
+        guide_out = guide_cls(feat_relu)[:, opts['guide_index']]
+
+        # compute feature perturbation by backforward
+        guide_out.sum().backward()
+        feat_delta = feat.grad
+
+        # normalization
+        scale = opts['scale'] * (feat.norm(dim = 1, keepdim = True) / feat_delta.norm(dim = 1, keepdim = True))
+        feat_delta_n = feat_delta * scale
+
+        feat_delta_n.detach_()
+        feat_delta_n.volatile = False
+        feat_delta_n.requires_grad = False
+        
+        if opts['debug']:
+            for s in np.arange(0.05, 0.51, 0.05).tolist():
+                bsz = feat.size(0)
+                scale = s * (feat.norm(dim = 1, keepdim = True) / feat_delta.norm(dim = 1, keepdim = True))
+                
+                feat_delta_s = feat_delta * scale
+
+                feat_pert = self.relu(torch.cat([feat + feat_delta_s, feat - feat_delta_s]))
+                guide_out_pert = guide_cls(feat_pert)[:, opts['guide_index']].contiguous()
+                age_out_pert, _ = self._compute_age(feat_pert)
+
+                # compute feat_age
+                feat_age = self.age_cls.relu(self.age_cls.embed(feat))
+                feat_age_pert = self.age_cls.relu(self.age_cls.embed(feat_pert))
+                feat_age_delta = feat_age_pert[0:bsz] - feat_age_pert[bsz::]
+
+                # compute feat_guide
+                feat_guide = guide_cls.relu(guide_cls.embed(feat))
+                feat_guide_pert = guide_cls.relu(guide_cls.embed(feat_pert))
+                feat_guide_delta = feat_guide_pert[0:bsz] - feat_guide_pert[bsz::]
+
+                mean_scale = scale.mean().data[0]
+                mean_guide_pert = (guide_out_pert[0:bsz] - guide_out_pert[bsz::]).mean().data[0]
+                mean_age_pert = (age_out_pert[0:bsz] - age_out_pert[bsz::]).abs().mean().data[0]
 
 
+                ####### perturbation informatin #########
+                print('#####################################################')
+                print('scale: %f' % s)
+                print('feat_perturb_scale:')
+                print((feat_delta_s.norm(dim = 1) / feat.norm(dim = 1)).mean().data[0])
+                
+                print('feat_age_perturb_scale:')
+                print((feat_age_delta.norm(dim = 1) / feat_age.norm(dim = 1)).mean().data[0])
+
+                print('guide_perturb_scale:')
+                print((feat_guide_delta.norm(dim = 1) / feat_guide.norm(dim = 1)).mean().data[0])
+
+                print('perturbation_debug_info: mean_scale: %f,   mean_guide_pert: %f,   mean_age_pert: %f' %\
+                    (mean_scale, mean_guide_pert, mean_age_pert))
+
+            ####### within video difference #########
+            print('#####################################################')
+            seq_len = 8
+            feat = feat.view(-1, seq_len, feat.size(1))
+            feat_diff = feat[:,0:-1,:] - feat[:, 1::,:]
+            
+
+            feat_age = feat_age.view(-1, seq_len, feat_age.size(1))
+            feat_age_diff = feat_age[:,0:-1,:] - feat_age[:,1::,:]
+
+            feat_guide = feat_guide.view(-1, seq_len, feat_guide.size(1))
+            feat_guide_diff = feat_guide[:,0:-1,:] - feat_guide[:,1::,:]
+
+            age_out,_ = self._compute_age(feat_relu)
+            age_out = age_out.contiguous().view(-1, seq_len)
+            age_diff = age_out[:,0:-1] - age_out[:,1::]
+
+            guide_out = guide_out.contiguous().view(-1, seq_len)
+            guide_diff = guide_out[:,0:-1] - guide_out[:,1::]
 
 
-    def forward(self, data):
+            print('frame_feat_diff_scale:')
+            print((feat_diff.norm(dim = 2).mean(dim = 1)/feat.norm(dim = 2).mean(dim = 1)).mean().data[0])
+
+            print('frame_feat_age_diff_scale:')
+            print((feat_age_diff.norm(dim = 2).mean(dim = 1)/feat_age.norm(dim = 2).mean(dim = 1)).mean().data[0])
+
+            print('frame_feat_guide_diff_scale:')
+            print((feat_guide_diff.norm(dim = 2).mean(dim = 1)/feat_guide.norm(dim = 2).mean(dim = 1)).mean().data[0])
+
+            print('frame_age_diff:')
+            print(age_diff.abs().mean().data[0])
+
+            print('frame_guide_diff:')
+            print(guide_diff.abs().mean().data[0])
+
+
+            ###### between video difference #########
+            print('-----------------------------------------------------')
+            feat = feat.mean(dim = 1)
+            feat_diff = feat[0:-1,:] - feat[1::,:]
+
+            feat_age = feat_age.mean(dim = 1)
+            feat_age_diff = feat_age[0:-1,:] - feat_age[1::,:]
+
+            feat_guide = feat_guide.mean(dim = 1)
+            feat_guide_diff = feat_guide[0:-1,:] - feat_guide[1::,:]
+
+            print('video_feat_diff_scale:')
+            print((feat_diff.norm(dim = 1).mean()/feat.norm(dim = 1).mean()).data[0])
+
+            print('video_feat_age_diff_scale:')
+            print((feat_age_diff.norm(dim = 1).mean()/feat_age.norm(dim = 1).mean()).data[0])
+
+            print('video_feat_guide_diff_scale:')
+            print((feat_guide_diff.norm(dim = 1).mean()/feat_guide.norm(dim = 1).mean()).data[0])
+            print('#####################################################')
+        
+            exit(0)
+
+        guide_cls.zero_grad()
+
+        return feat_delta_n
+
+
+    def forward(self, data, joint_test = False):
         '''
         Forward process
 
@@ -263,11 +450,16 @@ class JointModel(nn.Module):
                 img_age: (bsz_age, 3, 224, 224)
                 img_pose: (bsz_pose, 3, 224, 224)
                 img_attr: (bsz_attr, 3, 224, 224)
+
+            joint_test:
+                age, pose and attribute branches will use the same data (img_age)
         Output:
             age_out
             age_fc_out
             pose_out
             attr_out
+
+            pert_out
         '''
 
         # data
@@ -279,69 +471,75 @@ class JointModel(nn.Module):
             bsz_age = data[0].size(0)
             img.append(data[0])
 
-        if data[1] is None:
-            bsz_pose = 0
-        else:
-            bsz_pose = data[1].size(0)
-            img.append(data[1])
 
-        if data[2] is None:
-            bsz_attr = 0
+        if joint_test:
+            assert bsz_age > 0
+            bsz_pose = bsz_attr = bsz_age
         else:
-            bsz_attr = data[2].size(0)
-            img.append(data[2])
+            if data[1] is None:
+                bsz_pose = 0
+            else:
+                bsz_pose = data[1].size(0)
+                img.append(data[1])
+
+            if data[2] is None:
+                bsz_attr = 0
+            else:
+                bsz_attr = data[2].size(0)
+                img.append(data[2])
 
         assert len(img) > 0, 'no input image data'
         img = torch.cat(img)
 
 
-        # forward
+        # forward cnn and common embedding
         cnn_feat = self.cnn(img)
         cnn_feat = cnn_feat.view(cnn_feat.size(0), -1)
-
         feat = self.feat_embed(cnn_feat)
-        feat_relu = self.dropout(self.relu(feat))
-
         
-        # age
+        # perturbation
+        if self.pert_opts['enable'] and bsz_age > 0:
+            feat_comm = feat[0:bsz_age]
+            feat_delta = self.perturb_feat(feat_comm)
+            assert feat_comm.is_same_size(feat_delta)
+
+            feat_comm_pert = torch.cat([feat_comm + feat_delta, feat_comm - feat_delta])
+            feat_age_pert = self.age_cls.embed(self.relu(feat_comm_pert))
+            pert_out = [feat_age_pert[0:bsz_age], feat_age_pert[bsz_age::]]
+        else:
+            pert_out = None
+        
+
+        # forward classifiers
+        feat_relu = self.dropout(self.relu(feat))
+            # age
         if bsz_age == 0:
             age_out = None
             age_fc_out = None
         else:
-            age_fc_out = self.age_cls(feat_relu[0:bsz_age])
-            if self.opts.cls_type == 'dex':
-                # deep expectation
-                
-                age_scale = np.arange(self.opts.min_age, self.opts.max_age + 1, 1.0)
-                age_scale = Variable(age_fc_out.data.new(age_scale)).unsqueeze(1)
-                
-                age_out = torch.matmul(F.softmax(age_fc_out), age_scale).view(-1)
-                
-            elif self.opts.cls_type == 'oh':
-                # ordinal hyperplane
-                age_fc_out = F.sigmoid(age_fc_out)
-                age_out = age_fc_out.sum(dim = 1) + self.opts.min_age
+            age_out, age_fc_out = self._compute_age(feat_relu[0:bsz_age])
 
-            elif self.opts.cls_type == 'reg':
-
-                age_out = self.age_fc_out.view(-1) + self.opts.min_age
-
-
-        # pose
+            # pose
         if bsz_pose == 0 or self.pose_cls is None:
             pose_out = None
         else:
-            pose_out = self.pose_cls(feat_relu[bsz_age:(bsz_age+bsz_pose)])
+            if joint_test:
+                pose_out = self.pose_cls(feat_relu[0:bsz_age])
+            else:
+                pose_out = self.pose_cls(feat_relu[bsz_age:(bsz_age+bsz_pose)])
 
 
-        # attribute
+            # attribute
         if bsz_attr == 0 or self.attr_cls is None:
             attr_out = None
         else:
-            attr_out = F.sigmoid(self.attr_cls(feat_relu[(bsz_age+bsz_pose)::]))
+            if joint_test:
+                attr_out = F.sigmoid(self.attr_cls(feat_relu[0:bsz_age]))
+            else:
+                attr_out = F.sigmoid(self.attr_cls(feat_relu[(bsz_age+bsz_pose)::]))
 
 
-        return age_out, age_fc_out, pose_out, attr_out
+        return age_out, age_fc_out, pose_out, attr_out, pert_out
 
 
     def forward_video(self, data):
@@ -359,6 +557,7 @@ class JointModel(nn.Module):
             age_fc_out: (bsz_age, max_len, *fc_sz)
             pose_out: (bsz_pose, pose_dim)
             attr_out: (bsz_attr, num_attr)
+            pert_out: TBD
         '''
 
         # data
@@ -371,23 +570,59 @@ class JointModel(nn.Module):
             img_seq_age = img_seq_age.view(bsz_age*max_len, *img_sz)
             data[0] = img_seq_age
 
-            # todo: call perturbatin function here
 
-        age_out, age_fc_out, pose_out, attr_out = self.forward(data)
+        age_out, age_fc_out, pose_out, attr_out, pert_out = self.forward(data)
 
         if data[0] is not None:
             age_out = age_out.view(bsz_age, max_len)
             age_fc_out = age_fc_out.view(bsz_age, max_len, -1)
+            
+            if pert_out is not None:
+                pert_out[0] = pert_out[0].view(bsz_age, max_len, -1)
+                pert_out[1] = pert_out[1].view(bsz_age, max_len, -1)
 
+
+        return age_out, age_fc_out, pose_out, attr_out, pert_out
+
+    def forward_video_test(self, data):
+        '''
+        Forward video data through age, pose and attribute branches
+
+        Input:
+            data: (img_seq, seq_len)
+                img_seq: (bsz, max_len, 3, 224, 224)
+                seq_len: (bsz, 1)
+        Output:
+            age_out: (bsz, max_len)
+            age_fc_out: (bsz, max_len, *fc_sz)
+            pose_out: (bsz, pose_dim)
+            attr_out: (bsz, num_attr)
+            pert_out: TBD
+        '''
+
+        img_seq, seq_len = data
+
+        bsz, max_len = img_seq.size()[0:2]
+        img_sz = img_seq.size()[2::]
+
+        img_seq = img_seq.view(bsz * max_len, *img_sz)
+        data = [img_seq, None, None]
+
+        age_out, age_fc_out, pose_out, attr_out, _ = self.forward(data, joint_test = True)
+
+        age_out = age_out.view(bsz, max_len)
+        age_fc_out = age_fc_out.view(bsz, max_len, -1)
+
+        if pose_out is not None:
+            pose_out = pose_out.view(bsz, max_len, -1)
+        if attr_out is not None:
+            attr_out = attr_out.view(bsz, max_len, -1)
 
         return age_out, age_fc_out, pose_out, attr_out
 
 
-
-
 def train_model(model, train_opts):
 
-    
     if not train_opts.id.startswith('joint_'):
         train_opts.id = 'joint_' + train_opts.id
 
@@ -467,11 +702,18 @@ def train_model(model, train_opts):
 
     if train_opts.train_pose == 1:
         assert model.pose_cls is not None
-        learnable_params.append({'params': model.pose_cls.parameters(), 'lr_mult': train_opts.sidetask_lr_multiplier})
-
+        wd = train_opts.weight_decay * train_opts.loss_weight_pose if train_opts.adjust_weight_decay == 1 else train_opts.weight_decay
+        p_pose = {'params': model.pose_cls.parameters(), 'lr_mult': train_opts.sidetask_lr_multiplier, 'weight_decay': wd}
+        learnable_params.append(p_pose)
+        
     if train_opts.train_attr == 1:
         assert model.attr_cls is not None
-        learnable_params.append({'params': model.attr_cls.parameters(), 'lr_mult': train_opts.sidetask_lr_multiplier})
+        if model.opts.attr_share_fc == 1:
+            params = model.attr_cls.cls.parameters()
+        else:
+            params = model.attr_cls.parameters()
+        wd = train_opts.weight_decay * train_opts.loss_weight_attr if train_opts.adjust_weight_decay == 1 else train_opts.weight_decay
+        learnable_params.append({'params': params, 'lr_mult': train_opts.sidetask_lr_multiplier, 'weight_decay': wd})
 
     # create optimizer
     if train_opts.optim == 'sgd':
@@ -480,7 +722,6 @@ def train_model(model, train_opts):
     elif train_opts.optim == 'adam':
         optimizer = torch.optim.Adam(learnable_params, lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta), 
             eps = train_opts.optim_epsilon, weight_decay = train_opts.weight_decay)
-
 
     ### loss functions
     if model.opts.cls_type == 'dex':
@@ -532,8 +773,14 @@ def train_model(model, train_opts):
         pavi.connect(model_name = train_opts.id, info = {'session_text': opts_str})
 
 
-    ### main training loop
 
+    # save checkpoint if getting a best performance
+    checkbest_name = 'mae_age'
+    checkbest_value = sys.float_info.max
+    checkbest_epoch = -1
+
+
+    ### main training loop
     epoch = 0 # this is the epoch idex of age data
     while epoch < train_opts.max_epochs:
 
@@ -544,6 +791,10 @@ def train_model(model, train_opts):
         lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay))
         for i in xrange(len(optimizer.param_groups)):
             optimizer.param_groups[i]['lr'] = lr * optimizer.param_groups[i]['lr_mult']
+
+        if train_opts.lr_decay_pose > 0 :
+            p_pose['lr'] = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay_pose)) * p_pose['lr_mult']
+        
 
         # train one epoch
         for batch_idx, age_data in enumerate(age_train_loader):
@@ -585,7 +836,7 @@ def train_model(model, train_opts):
 
 
             # forward
-            age_out, age_fc_out, pose_out, attr_out = model.forward(data)
+            age_out, age_fc_out, pose_out, attr_out, _ = model.forward(data)
 
             loss = crit_age(age_fc_out, age_label) * train_opts.loss_weight_age
 
@@ -713,7 +964,7 @@ def train_model(model, train_opts):
 
                 data = [img_age, None, None]
 
-                age_out, age_fc_out, _, _ = model.forward(data)
+                age_out, age_fc_out, _, _, _ = model.forward(data)
 
                 loss = crit_age(age_fc_out, age_label)
                 if use_age_std:
@@ -770,7 +1021,7 @@ def train_model(model, train_opts):
                     pose_gt = Variable(pose_gt[:,0:model.opts.pose_dim].float()).cuda()
                     data = [_, img_pose, _]
 
-                    _, _, pose_out, _ = model.forward(data)
+                    _, _, pose_out, _, _ = model.forward(data)
 
                     loss = crit_pose(pose_out, pose_gt)
                     meas_pose.add(pose_out, pose_gt)
@@ -807,7 +1058,7 @@ def train_model(model, train_opts):
                     attr_gt = Variable(attr_gt.float()).cuda()
                     data = [_, _, img_attr]
 
-                    _, _, _, attr_out = model.forward(data)
+                    _, _, _, attr_out, _ = model.forward(data)
 
                     loss = crit_attr(attr_out, attr_gt)
                     meas_attr.add(attr_out, attr_gt)
@@ -847,12 +1098,21 @@ def train_model(model, train_opts):
             if train_opts.pavi == 1:
                 pavi.log(phase = 'test', iter_num = iteration, outputs = pavi_outputs)
 
+            if info['test_history'][-1][checkbest_name] < checkbest_value:
+                checkbest_value = info['test_history'][-1][checkbest_name]
+                checkbest_epoch = epoch
+                _snapshot('best')
+
         # snapshot
         if train_opts.snapshot_interval > 0 and epoch % train_opts.snapshot_interval == 0:
             _snapshot(epoch)
 
     # final snapshot
     _snapshot(epoch = 'final')
+
+    log = 'best performance: epoch %d' % checkbest_epoch
+    print(log)
+    print(log, file = fout)
     fout.close()
 
 
@@ -879,7 +1139,7 @@ def train_model_video(model, train_opts):
 
     age_train_loader = torch.utils.data.DataLoader(age_train_dset, batch_size = train_opts.batch_size, shuffle = True, 
         num_workers = 4, pin_memory = True)
-    age_test_loader  = torch.utils.data.DataLoader(age_test_dset, batch_size = 32, 
+    age_test_loader  = torch.utils.data.DataLoader(age_test_dset, batch_size = 16, 
         num_workers = 4, pin_memory = True)
 
     # pose
@@ -929,11 +1189,18 @@ def train_model_video(model, train_opts):
 
     if train_opts.train_pose == 1:
         assert model.pose_cls is not None
-        learnable_params.append({'params': model.pose_cls.parameters(), 'lr_mult': train_opts.sidetask_lr_multiplier})
-
+        wd = train_opts.weight_decay * train_opts.loss_weight_pose if train_opts.adjust_weight_decay == 1 else train_opts.weight_decay
+        p_pose = {'params': model.pose_cls.parameters(), 'lr_mult': train_opts.sidetask_lr_multiplier, 'weight_decay': wd}
+        learnable_params.append(p_pose)
+        
     if train_opts.train_attr == 1:
         assert model.attr_cls is not None
-        learnable_params.append({'params': model.attr_cls.parameters(), 'lr_mult': train_opts.sidetask_lr_multiplier})
+        if model.opts.attr_share_fc == 1:
+            params = model.attr_cls.cls.parameters()
+        else:
+            params = model.attr_cls.parameters()
+        wd = train_opts.weight_decay * train_opts.loss_weight_attr if train_opts.adjust_weight_decay == 1 else train_opts.weight_decay
+        learnable_params.append({'params': params, 'lr_mult': train_opts.sidetask_lr_multiplier, 'weight_decay': wd})
 
     # create optimizer
     if train_opts.optim == 'sgd':
@@ -955,6 +1222,9 @@ def train_model_video(model, train_opts):
     crit_age = misc.Smooth_Loss(misc.Video_Loss(crit_age))
     meas_age = misc.Video_Age_Analysis()
 
+    crit_pert = misc.L2NormLoss()
+    crit_pert = misc.Smooth_Loss(misc.Video_Loss(crit_pert, same_sz = True))
+
     if train_opts.train_pose == 1:
         crit_pose = misc.Smooth_Loss(nn.MSELoss())
         meas_pose = misc.Pose_MAE(pose_dim = model.opts.pose_dim)
@@ -962,6 +1232,7 @@ def train_model_video(model, train_opts):
     if train_opts.train_attr == 1:
         crit_attr = misc.Smooth_Loss(nn.BCELoss())
         meas_attr = misc.MeanAP()
+        
 
     ### output training information
     # json_log
@@ -1012,6 +1283,21 @@ def train_model_video(model, train_opts):
         for i in xrange(len(optimizer.param_groups)):
             optimizer.param_groups[i]['lr'] = lr * optimizer.param_groups[i]['lr_mult']
 
+        if train_opts.lr_decay_pose > 0 :
+            p_pose['lr'] = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay_pose)) * p_pose['lr_mult']
+
+        # enable perturb
+        if train_opts.pert_enable == 1 and train_opts.pert_start_time == epoch:
+            model.pert_opts['enable'] = True
+            model.pert_opts['mode'] = train_opts.pert_mode
+            model.pert_opts['guide_signal'] = train_opts.pert_guide_signal
+            model.pert_opts['guide_index'] = train_opts.pert_guide_index
+            model.pert_opts['scale'] = train_opts.pert_scale
+
+            log = 'start feature perturbation at epoch %d' % epoch
+            print(log)
+            print(log, file = fout)
+
         # train one epoch
         for batch_idx, age_data in enumerate(age_train_loader):
             optimizer.zero_grad()
@@ -1052,9 +1338,8 @@ def train_model_video(model, train_opts):
 
             data = [(img_seq_age, seq_len_age), img_pose, img_attr]
 
-
             # forward
-            age_out, age_fc_out, pose_out, attr_out = model.forward_video(data)
+            age_out, age_fc_out, pose_out, attr_out, pert_out = model.forward_video(data)
 
 
             # compute loss
@@ -1070,10 +1355,14 @@ def train_model_video(model, train_opts):
                 # don't compute attribute meanAP on training set
                 # meas_attr.add(attr_out, attr_gt)
 
+            if model.pert_opts['enable']:
+                assert pert_out is not None
+                loss += crit_pert(pert_out[0], pert_out[1], seq_len_age) * train_opts.loss_weight_pert
+                
+
             # backward
             loss.backward()
 
-            
             # optimize
             if train_opts.clip_grad > 0:
                 total_grad_norm = torch.nn.utils.clip_grad_norm(model.parameters(), train_opts.clip_grad)
@@ -1112,6 +1401,17 @@ def train_model_video(model, train_opts):
                 }
 
                 
+                if model.pert_opts['enable']:
+                    loss_pert = crit_pert.smooth_loss()
+                    crit_pert.clear()
+
+                    log_pert = '[Perturbation]   Loss: %.6f (weight: %.0e)' % (loss_pert, train_opts.loss_weight_pert)
+                    log = log + '\n\t' + log_pert
+                    
+                    train_info['loss_pert'] = loss_pert
+                    pavi_outputs['loss_pert'] = loss_pert
+
+                
                 if train_opts.train_pose:
 
                     loss_pose = crit_pose.smooth_loss()
@@ -1135,6 +1435,7 @@ def train_model_video(model, train_opts):
                         pavi_outputs['mae_pose_%s_upper' % ['yaw', 'pitch', 'roll'][i]] = mae_pose[i]
 
 
+
                 if train_opts.train_attr:
                     loss_attr = crit_attr.smooth_loss()
                     crit_attr.clear()
@@ -1144,6 +1445,7 @@ def train_model_video(model, train_opts):
 
                     train_info['loss_attr'] = loss_attr
                     pavi_outputs['loss_attr'] = loss_attr
+
 
                 print(log) # to screen
                 print(log, file = fout) # to log file
@@ -1167,6 +1469,7 @@ def train_model_video(model, train_opts):
             ## test age
             crit_age.clear()
             meas_age.clear()
+            crit_pert.clear()
 
             for batch_idx, age_data in enumerate(age_test_loader):
                 
@@ -1179,10 +1482,14 @@ def train_model_video(model, train_opts):
 
                 data = [(img_seq_age, seq_len_age), None, None]
 
-                age_out, age_fc_out, _, _ = model.forward_video(data)
+                age_out, age_fc_out, _, _, pert_out = model.forward_video(data)
 
                 loss = crit_age(age_fc_out, age_label, seq_len_age)
                 meas_age.add(age_out, age_gt, seq_len_age, age_std)
+
+                if model.pert_opts['enable']:
+                    loss = crit_pert(pert_out[0], pert_out[1], seq_len_age)
+
 
 
                 print('\r Testing Age %d/%d (%.2f%%)' % (batch_idx, len(age_test_loader), 100.*batch_idx/len(age_test_loader)), end = '')
@@ -1227,6 +1534,17 @@ def train_model_video(model, train_opts):
                 'der_age_upper': der,
             }
 
+            if model.pert_opts['enable']:
+                loss_pert = crit_pert.smooth_loss()
+
+                log_pert = '[Perturbation]   Loss: %.6f (weight: %.0e)' % (loss_pert, train_opts.loss_weight_pert)
+                log = log + '\n\t' + log_pert
+
+                test_info['loss_pert'] = loss_pert
+                pavi_outputs['loss_pert'] = loss_pert
+
+                crit_pert.clear()
+
             ## test pose
             if train_opts.train_pose:
                 crit_pose.clear()
@@ -1238,7 +1556,7 @@ def train_model_video(model, train_opts):
                     pose_gt = Variable(pose_gt[:,0:model.opts.pose_dim].float()).cuda()
                     data = [_, img_pose, _]
 
-                    _, _, pose_out, _ = model.forward(data)
+                    _, _, pose_out, _, _ = model.forward(data)
 
                     loss = crit_pose(pose_out, pose_gt)
                     meas_pose.add(pose_out, pose_gt)
@@ -1275,7 +1593,7 @@ def train_model_video(model, train_opts):
                     attr_gt = Variable(attr_gt.float()).cuda()
                     data = [_, _, img_attr]
 
-                    _, _, _, attr_out = model.forward(data)
+                    _, _, _, attr_out, _ = model.forward(data)
 
                     loss = crit_attr(attr_out, attr_gt)
                     meas_attr.add(attr_out, attr_gt)
@@ -1335,6 +1653,96 @@ def train_model_video(model, train_opts):
     fout.close()
 
 
+def test_model_video(model, test_opts):
+    print('[Joint.test_video] test options: %s' % test_opts)
+    if torch.cuda.device_count() > 1:
+        model.cnn = nn.DataParallel(model.cnn)
+    model.cuda()
+    model.eval()
+
+    # create dataloader
+    test_dset = dataset.load_video_age_dataset(version = test_opts.dataset_version, subset = test_opts.subset, 
+        crop_size = test_opts.crop_size, age_rng = [0, 70])
+    test_loader = torch.utils.data.DataLoader(test_dset, batch_size = test_opts.batch_size, num_workers = 4)
+
+    # metrics
+    meas_age = misc.Video_Age_Analysis()
+
+    age_pred = []
+    pose_pred = []
+    attr_pred = []
+
+    for batch_idx, data in enumerate(test_loader):
+
+        img_seq, seq_len, age_gt, age_std = data
+        img_seq = Variable(img_seq, volatile = True).cuda()
+        seq_len = Variable(seq_len, volatile = True).cuda()
+        age_gt = age_gt.float()
+        age_std = age_std.float()
+
+        # forward
+        age_out, _, pose_out, attr_out = model.forward_video_test((img_seq, seq_len))
+
+        meas_age.add(age_out, age_gt, seq_len, age_std)
+
+        if test_opts.output_rst == 1:
+            for i, l in enumerate(seq_len):
+                l = int(l.data[0])
+                age_pred.append(age_out.data.cpu()[i,0:l].numpy().tolist())
+                if pose_out is not None:
+                    pose_pred.append(pose_out.data.cpu()[i,0:l,:].numpy().tolist())
+                else:
+                    pose_pred.append(None)
+                if attr_out is not None:
+                    attr_pred.append(attr_out.data.cpu()[i,0:l,:].numpy().tolist())
+                else:
+                    attr_pred.append(None)
+
+        print('\rTesting %d/%d (%.2f%%)' % (batch_idx, len(test_loader), 100.*batch_idx/len(test_loader)), end = '')
+        sys.stdout.flush()
+    print('\n')
+
+    # define output information
+    info = {
+        'test_opts': vars(test_opts),
+        'test_result': {
+            'mae': meas_age.mae(),
+            'ca3': meas_age.ca(3),
+            'ca5': meas_age.ca(5),
+            'ca10': meas_age.ca(10),
+            'lap_err': meas_age.lap_err(),
+            'der': meas_age.stable_der(),
+            'range': meas_age.stable_range()
+        }
+    }
+
+    print('[AgeModel.test_video] Test model id: %s' % test_opts.id)
+    for metric in ['mae', 'ca3', 'ca5', 'ca10', 'lap_err', 'der', 'range']:
+        print('\t%s\t%f' % (metric, info['test_result'][metric]))
+
+    # output dir
+    if test_opts.id.endswith('.pth'):
+        # test_opts.id is file name
+        output_dir = os.path.dirname(test_opts.id)
+    else:
+        # test_opts.id is model id
+        output_dir = os.path.join('models', test_opts.id)
+
+    assert os.path.isdir(output_dir)
+
+    fn_info = os.path.join(output_dir, 'video_test_info.json')
+    io.save_json(info, fn_info)
+
+
+    if test_opts.output_rst == 1:
+        id_lst = test_dset.id_lst
+        
+        rst = {s_id: {'age': age, 'pose':pose, 'attr': attr} for s_id, age,pose,attr in zip(id_lst, age_pred, pose_pred, attr_pred)}
+
+        fn_rst = os.path.join(output_dir, 'video_age_v%s_test_rst.pkl' % test_opts.dataset_version)
+        io.save_data(rst, fn_rst)
+
+
 
 if __name__ == '__main__':
 
@@ -1376,6 +1784,22 @@ if __name__ == '__main__':
             train_model(model, train_opts)
         else:
             train_model_video(model, train_opts)
+
+    elif command == 'test' or command == 'test_video':
+        test_opts = opt_parser.parse_opts_test()
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in test_opts.gpu_id])
+
+        if test_opts.id.endswith('.pth'):
+            fn = test_opts.id
+        else:
+            fn = os.path.join('models', test_opts.id, 'final.pth')
+
+        model = JointModel(fn = fn)
+
+        if command == 'test':
+            test_model(model, test_opts)
+        else:
+            test_model_video(model, test_opts)
 
     else:
         raise Exception('invalid command "%s"' % command)

@@ -37,14 +37,15 @@ class Video_Loss():
     wrapper to apply image-level loss function to video data.
     '''
 
-    def __init__(self, crit):
+    def __init__(self, crit, same_sz = False):
         self.crit = crit
+        self.same_sz = same_sz
 
     def __call__(self, out, gt, seq_len):
         '''
         input:
             out: [bsz, max_seq_len, *output_sz]
-            gt : [bsz, *gt_sz]
+            gt : [bsz, *gt_sz]. if same_sz == Ture, gt has the same size as "out"
             seq_len: [bsz, 1]
         '''
 
@@ -58,7 +59,11 @@ class Video_Loss():
             l = int(l.data[0])
 
             out_unfold.append(out[i, 0:l])
-            gt_unfold.append(gt[i:(i+1)].expand(l, *gt_sz))
+
+            if not self.same_sz:
+                gt_unfold.append(gt[i:(i+1)].expand(l, *gt_sz))
+            else:
+                gt_unfold.append(gt[i,0:l])
 
         out_unfold = torch.cat(out_unfold)
         gt_unfold = torch.cat(gt_unfold)
@@ -74,7 +79,6 @@ class Video_Loss():
         # index = torch.LongTensor([i for i in xrange(bsz * max_seq_len) if seq_len.data[i//max_seq_len][0] > (i%max_seq_len)])
         # out_unfold = torch.index_select(out, 0, index)
         # gt_unfold = torch.index_select(gt, 0, index)
-
 
         return self.crit(out_unfold, gt_unfold)
 
@@ -485,3 +489,11 @@ class Pose_MAE():
         assert self.err_buffer is not None
         return np.abs(self.err_buffer).mean(axis = 0) / np.pi * 180.
 
+class L2NormLoss(nn.Module):
+
+    def forward(self, input_1, input_2):
+        assert input_1.is_same_size(input_2)
+
+        bsz = input_1.size(0)
+
+        return (input_1 - input_2).norm(p = 2) / bsz

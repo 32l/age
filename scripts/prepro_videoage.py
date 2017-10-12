@@ -431,10 +431,9 @@ def create_video_label_1():
     io.save_json(va_person, 'datasets/video_age/Labels/v%s_person_pre.json' % version)
 
 
-
 def interp_sdk_rst():
 
-    sdk_rst = io.load_data('output/video_analysis/video_age_v2.0_detect.pkl')
+    sdk_rst = io.load_data('output/video_analysis/video_age_v2.0_detect.pkl.copy')
     for s_id, rst in sdk_rst.iteritems():
         if False in rst['valid']:
             seq_len = len(rst['valid'])
@@ -462,7 +461,6 @@ def interp_sdk_rst():
             sdk_rst[s_id] = rst
 
     io.save_data(sdk_rst, 'output/video_analysis/video_age_v2.0_detect.pkl')
-
 
 def alignment():
 
@@ -640,179 +638,6 @@ def create_image_dataset():
         print('%s: %d' % (subset, len(sample_lst)))
         io.save_json(sample_lst, 'datasets/video_age/Labels/v%s_image_%s.json' % (version, subset))
 
-def video_analyze():
-
-    import csv
-
-    # load experiment results
-    print('loading experiment results ...')
-    # rst_age = io.load_data('models/age_va_4.0.3/video_test_rst.pkl')
-    # rst_age = io.load_data('models/age_pre_2.2/video_test_rst.pkl')
-    rst_age = io.load_data('models/age_morph_3.2/video_test_rst.pkl')
-
-    rst_pose = io.load_data('models/pose_4.0.2n/video_test_rst.pkl')
-    rst_attr = io.load_data('models/attr_1.0.3/video_test_rst.pkl')
-
-    id_lst = rst_age.keys()
-    print('sample number: %d' % len(id_lst))
-
-
-    # load attribute list
-
-    attr_lst = io.load_str_list('datasets/CelebA/Label/attr_name_lst.txt')
-    assert len(attr_lst) == len(rst_attr.values()[0][0])
-
-    pose_lst = ['yaw', 'pitch']
-    assert len(pose_lst) == len(rst_pose.values()[0][0])
-
-    item_lst = ['age'] + pose_lst + attr_lst + ['random']
-
-    # analyze
-    print('analyzing ...')
-
-    data_mean = []
-    data_var  = []
-    data_cov = []
-    data_cov1 = []
-    data_rng = []
-
-    for idx, s_id in enumerate(id_lst):
-
-        seq_age = rst_age[s_id] # list [seq_len]
-        seq_pose = rst_pose[s_id] # list [seq_len, pose_dim]
-        seq_attr = rst_attr[s_id] # list [seq_len, num_attr]
-
-
-        seq_len = len(seq_age)
-
-        seq_age = np.array(seq_age).reshape(seq_len, 1)
-        seq_pose = np.array(seq_pose) / np.pi * 180.
-        seq_random = np.random.rand(seq_len, 1)
-
-
-        seq_data = np.concatenate((seq_age, seq_pose, seq_attr, seq_random), axis = 1).astype(np.float).T
-        seq_diff = np.abs(seq_data[:, 1::] - seq_data[:, 0:-1])
-
-        seq_data[1, :] = np.abs(seq_data[1, :]) # get absolute value of yaw
-
-        # 0-order correlation
-        cov = np.cov(seq_data)
-
-        # 1-order(absolute) correlation
-        cov1 = np.cov(seq_diff)
-
-        # variation (not variance)
-        var = np.sum(seq_diff, axis = 1) / seq_len
-
-        # average value
-        mean = np.mean(seq_data, axis = 1)
-
-        # range
-        rng = np.max(seq_data, axis = 1) - np.min(seq_data, axis = 1)
-        
-        data_mean.append(mean)
-        data_var.append(var)
-        data_cov.append(cov)
-        data_cov1.append(cov1)
-        data_rng.append(rng)
-
-    data_mean = np.array(data_mean, np.float).T
-    data_var = np.array(data_var, np.float).T
-    data_rng = np.array(data_rng, np.float).T
-    ave_cov = np.mean(data_cov, axis = 0)
-    ave_cov1 = np.mean(data_cov1, axis =0)
-
-    age_bins = range(0, 71, 5)
-    age_dist, _ = np.histogram(data_mean[0], bins = age_bins)
-    age_dist = age_dist / np.sum(age_dist) * 100
-
-    age_var_bins = np.concatenate((np.arange(0, 10.1, 0.25), [np.inf]))
-    age_var_dist, age_var_bins = np.histogram(data_var[0], bins = age_var_bins)
-    age_var_dist = age_var_dist / np.sum(age_var_dist) * 100
-    # print('age var bins')
-    # print(age_var_bins)
-
-    age_rng_bins = np.concatenate((np.arange(0, 21, 2), [np.inf]))
-    age_rng_dist, age_rng_bins = np.histogram(data_rng[0], bins = age_rng_bins)
-    age_rng_dist = age_rng_dist / np.sum(age_rng_dist) * 100
-    # print('age range bins')
-    # print(age_rng_bins)
-
-    # yaw_var_bins = np.concatenate((np.arange(0, 5.01, 0.1), [np.inf]))
-    yaw_var_bins = np.concatenate((np.arange(0, 15.01, 0.3), [np.inf]))
-    yaw_var_dist, yaw_var_bins = np.histogram(data_var[1], bins = yaw_var_bins)
-    # yaw_var_dist, yaw_var_bins = np.histogram(data_var[1])
-    yaw_var_dist = yaw_var_dist / np.sum(yaw_var_dist) * 100
-    # print('yaw var bins')
-    # print(yaw_var_bins)
-    # print(yaw_var_dist)
-
-    yaw_rng_bins = np.concatenate((np.arange(0, 91, 5), [np.inf]))
-    yaw_rng_dist, yaw_rng_bins = np.histogram(data_rng[1], bins = yaw_rng_bins)
-    yaw_rng_dist = yaw_rng_dist / np.sum(yaw_rng_dist) * 100
-    # print('yaw range bins')
-    # print(yaw_rng_bins)
-
-
-
-    corr = ave_cov / np.sqrt(np.dot(ave_cov.diagonal().reshape(-1,1), ave_cov.diagonal().reshape(1,-1)))
-    corr1 = ave_cov1 / np.sqrt(np.dot(ave_cov1.diagonal().reshape(-1,1), ave_cov1.diagonal().reshape(1,-1)))
-
-    # output
-    output_dir = 'output/video_age_analysis'
-    io.mkdir_if_missing(output_dir)
-
-    output_fn = os.path.join(output_dir, 'video_age_1.0_morph_3.2.csv')
-
-    with open(output_fn, 'wb') as f:
-        csv_writer = csv.writer(f)
-
-        # output age distribution
-        csv_writer.writerow(['Age', 'Percent'])
-        csv_writer.writerows([[b, d] for (b, d) in zip(age_bins, age_dist)])
-        csv_writer.writerow([])
-
-        # output age range distribution
-        csv_writer.writerow(['Age Range', 'Percent'])
-        csv_writer.writerows([[b, d] for (b, d) in zip(age_rng_bins, age_rng_dist)])
-        csv_writer.writerow([])
-        
-        # outut age variation distribution
-        csv_writer.writerow(['Age Variation', 'Percent'])
-        csv_writer.writerows([[b, d] for (b, d) in zip(age_var_bins, age_var_dist)])
-        csv_writer.writerow([])
-
-        # output yaw range distribution
-        csv_writer.writerow(['Yaw Range', 'Percent'])
-        csv_writer.writerows([[b, d] for (b, d) in zip(yaw_rng_bins, yaw_rng_dist)])
-        csv_writer.writerow([])
-
-        # output yaw variation distribution
-        csv_writer.writerow(['Yaw Variation', 'Percent'])
-        csv_writer.writerows([[b, d] for (b, d) in zip(yaw_var_bins, yaw_var_dist)])
-        csv_writer.writerow([])
-
-        # output 0-order age correlation
-        csv_writer.writerow(['Attribute', 'Age Corr (0)'])
-        csv_writer.writerows([[item_lst[i], c] for i, c in enumerate(corr[0])])
-        csv_writer.writerow([])
-
-        # output 1-order age correlation
-        csv_writer.writerow(['Attribute', 'Age Corr (1)'])
-        csv_writer.writerows([[item_lst[i], c] for i, c in enumerate(corr1[0])])
-        csv_writer.writerow([])
-
-        # output 0-order full correlation
-        csv_writer.writerow([''] + item_lst)
-        for i, att in enumerate(item_lst):
-            csv_writer.writerow([att] + corr[i].tolist())
-        csv_writer.writerow([])
-
-        # output 1-order full correlation
-        csv_writer.writerow([''] + item_lst)
-        for i, att in enumerate(item_lst):
-            csv_writer.writerow([att] + corr1[i].tolist())
-        csv_writer.writerow([])
 
 
 
@@ -825,9 +650,7 @@ if __name__ == '__main__':
     # alignment()
     # interp_sdk_rst()
     # create_split()
-    create_image_dataset()
+    # create_image_dataset()
 
-
-    # video_analyze()
     # pass
     

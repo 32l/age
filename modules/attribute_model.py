@@ -2,16 +2,17 @@
 
 from __future__ import division, print_function
 
-import util.io as io
-import dataset
-import misc
-import opt_parser
-
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import torch.nn.functional as F
 import torchvision
+
+import util.io as io
+import dataset
+import misc
+import opt_parser
+
 
 import os
 import sys
@@ -556,7 +557,7 @@ def test_model_video(model, test_opts):
 
     assert os.path.isdir(output_dir)
 
-    fn_rst = os.path.join(output_dir, 'video_test_rst.pkl')
+    fn_rst = os.path.join(output_dir, 'video_age_v%s_test_rst.pkl' % test_opts.dataset_version)
     io.save_data(rst, fn_rst)
 
 

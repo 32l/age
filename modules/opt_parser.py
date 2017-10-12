@@ -64,6 +64,9 @@ def parse_opts_joint_model():
     parser.add_argument('--attr_name_fn', type = str, default = 'datasets/CelebA/Label/attr_name_lst.txt',
         help = 'attribute name list file')
 
+    parser.add_argument('--attr_share_fc', type = int, default = 0, choices = [0,1],
+        help = 'pose and attribute branchs share the fc layer')
+
 
     opts = parser.parse_known_args()[0]
     return opts
@@ -294,8 +297,42 @@ def parse_opts_train():
         choices = ['celeba', 'celeba_selc1'],
         help = 'dataset for attribute recognition')
 
+    parser.add_argument('--adjust_weight_decay', type = int, default = 0,
+        help = 'adjust weight decay w.r.t. loss weight')
+
+    parser.add_argument('--lr_decay_pose', type = int, default = -1,
+        help = 'specilize learning rate decay for pose branch')
+
+    # perturbation
+    parser.add_argument('--pert_enable', type = int, default = 0, choices = [0, 1],
+        help = 'enable feature perturbation')
+
+    parser.add_argument('--loss_weight_pert', type = float, default = 1.0,
+        help = 'perturbation loss weight')
+
+    parser.add_argument('--pert_mode', type = str, default = 'age_embed_L2',
+        choices = ['age_embed_L2', 'age_embed_cos'],
+        help = 'perturbation method')
+
+    parser.add_argument('--pert_start_time', type = int, default = 1,
+        help = 'enable perturbation after a number of training epochs')
+
+    parser.add_argument('--pert_guide_signal', type = str, default = 'pose', 
+        choices = ['pose', 'attr'],
+        help = 'type of perturbation guidance signal')
+
+    parser.add_argument('--pert_guide_index', type = int, default = 0,
+        help = 'output index of perturbation guidance signal')
+
+    parser.add_argument('--pert_scale', type = float, default = 0.05,
+        help = 'perturbation scale')
+
+
+
+
     opts = parser.parse_known_args()[0]
     return opts
+
 
 def parse_opts_test():
 
@@ -317,8 +354,8 @@ def parse_opts_test():
         choices = ['imdb_wiki', 'imdb_wiki_good', 'megaage', 'morph', 'lap', 'video_age'],
         help = 'dataset name [imdb_wiki|imdb_wiki_good|megaage|morph|lap|video_age]')
 
-    parser.add_argument('--dataset_version', type = str, default = '1.0',
-        choices = ['1.0'],
+    parser.add_argument('--dataset_version', type = str, default = '2.0',
+        choices = ['1.0', '2.0'],
         help = 'video_age dataset version')
 
     parser.add_argument('--subset', type = str, default = 'test',
@@ -329,7 +366,7 @@ def parse_opts_test():
         choices = ['3', '21', 'none'],
         help = 'face alignment mode. see prepro_general for more information')
 
-    parser.add_argument('--batch_size', type = int, default = 512,
+    parser.add_argument('--batch_size', type = int, default = 128,
         help = 'batch size')
 
     parser.add_argument('--crop_size', type = int, default = 128,

@@ -939,9 +939,9 @@ def test_model_video(model, test_opts):
         id_lst = test_dset.id_lst
         assert len(id_lst) == len(age_pred)
         
-        rst = {s_id: a for s_id, a in zip(id_lst, age_pred)}
+        rst = {s_id: {'age': a} for s_id, a in zip(id_lst, age_pred)}
 
-        fn_rst = os.path.join(output_dir, 'video_test_rst.pkl')
+        fn_rst = os.path.join(output_dir, 'video_age_v%s_test_rst.pkl' % test_opts.dataset_version)
         io.save_data(rst, fn_rst)
 
 
