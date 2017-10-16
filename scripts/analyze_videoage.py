@@ -1,6 +1,7 @@
 
 from __future__ import print_function, division
 
+import modules.joint_model as joint_model
 import sys
 import os
 import util.io as io
@@ -8,7 +9,7 @@ import util.image as image
 import numpy as np
 
 
-def video_analyze():
+def corr_analyze(age_model_id, pose_model_id = None, attr_model_id = None):
 
     import csv
 
@@ -21,9 +22,14 @@ def video_analyze():
     id_lst = va_split['test']
     print('sample number: %d' % len(id_lst))
 
-    age_model_id = 'joint_va_3.0.1'
-    pose_model_id = 'joint_va_3.0.1' # pose_4.0.2n
-    attr_model_id = 'joint_va_3.0.1' # attr_1.0.3
+    # age_model_id = 'joint_va_3.0.1'
+    # pose_model_id = 'joint_va_3.0.1' # pose_4.0.2n
+    # attr_model_id = 'joint_va_3.0.1' # attr_1.0.3
+
+    if pose_model_id is None:
+        pose_model_id = age_model_id
+    if attr_model_id is None:
+        attr_model_id = age_model_id
 
     #======== age result  ============
     # fn_age = 'output/video_analysis/video_age_v2.0_detect.pkl'
@@ -210,7 +216,162 @@ def video_analyze():
         csv_writer.writerow(['fn_attr', fn_attr])
 
 
+def feat_analyze(model_id):
+
+    # config
+    num_sample = 20
+    num_corr_feat = 20
+    skip_top_sample = 50
+
+    import matplotlib.pyplot as plt
+    import matplotlib.image as mpimg
+
+    print('load model...')
+    fn_model = os.path.join('models', model_id, 'best.pth')
+    model = joint_model.JointModel(opts = None, fn = fn_model, fn_cnn = None)
+    fc_w_age = model.age_cls.embed.weight.data.numpy()
+    corr_feat_idx = np.abs(fc_w_age).sum(axis = 0).argsort()[::-1][0:num_corr_feat]
+
+    print('load result...')
+    fn_rst = os.path.join('models', model_id, 'video_age_v2.0_test_rst.pkl')
+    rst = io.load_data(fn_rst)
+
+
+    print('load feature...')
+    fn_feat = os.path.join('models', model_id, 'video_age_v2.0_feat.pkl')
+    feat_dict = io.load_data(fn_feat)
+
+
+    # search large difference of age estimation result between 2 frames
+    age_diff_lst = []
+    for s_id, r in rst.iteritems():
+        age = np.array(r['age'])
+        age_diff = np.abs(age[0:-1] - age[1::])
+        
+        idx = age_diff.argmax()
+
+        age_diff_lst.append((s_id, age_diff.max(), idx, age[idx], age[idx+1]))
+
+
+    age_diff_lst.sort(key = lambda x:x[1], reverse = True)
+    age_diff = age_diff_lst[skip_top_sample:skip_top_sample+num_sample]
+
+    
+    # feature
+    feat_out = []
+
+    for i, s in enumerate(age_diff):
+        s_id = s[0]
+        t = s[2]
+        feat = feat_dict[s_id]
+        
+        f = feat['feat'][t]
+        f_delta = feat['feat_delta'][t]
+        f_diff = feat['feat'][t+1] - f
+
+        feat_out.append({
+            'feat': f,
+            'feat_delta': f_delta,
+            'feat_diff': f_diff,
+            'feat_corr': f[corr_feat_idx],
+            'feat_delta_corr': f_delta[corr_feat_idx],
+            'feat_diff_corr': f_diff[corr_feat_idx],
+            'age': [s[3], s[4]],
+            't': [s[2], s[2]+1],
+            'id': s_id,
+            })
+
+
+    
+    output_dir = os.path.join('output/video_age_feat_analysis/%s' % model_id)
+    io.mkdir_if_missing(output_dir)
+
+    va_video = io.load_json('datasets/video_age/Labels/v2.0_video.json')
+    
+    
+    for i, feat_info in enumerate(feat_out):
+        s_id = feat_info['id']
+        t1, t2 = feat_info['t']
+        age1, age2 = feat_info['age']
+
+        fig = plt.figure(figsize = (30,4.8))
+        
+        # frame t1
+        ax = fig.add_subplot(1, 8, 1)
+        
+        img = mpimg.imread(va_video[s_id]['frames'][t1]['image'])
+        ax.imshow(img)
+        ax.set_xlabel('%f' % age1)
+
+        # frame t2
+        ax = fig.add_subplot(1, 8, 2)
+
+        img = mpimg.imread(va_video[s_id]['frames'][t2]['image'])
+        ax.imshow(img)
+        ax.set_xlabel('%f' % age2)
+        
+
+        # feature
+        ax =  fig.add_subplot(1, 8, 3)
+        ax.set_ylim([-10,10])
+        
+        ax.plot(feat_info['feat'])
+        ax.set_xlabel('feat')
+
+        # feature delta
+        
+        ax =  fig.add_subplot(1, 8, 4)
+        ax.set_ylim([-10,10])
+        
+        ax.plot(feat_info['feat_delta'])
+        ax.set_xlabel('feat_delta')
+
+        # feature
+        
+        ax =  fig.add_subplot(1, 8, 5)
+        ax.set_ylim([-10,10])
+        
+        ax.plot(feat_info['feat_diff'])
+        ax.set_xlabel('feat_diff')
+
+        # feature
+        
+        ax =  fig.add_subplot(1, 8, 6)
+        ax.set_ylim([-10,10])
+        
+        ax.plot(feat_info['feat_corr'])
+        ax.set_xlabel('feat')
+
+        # feature delta
+        
+        ax =  fig.add_subplot(1, 8, 7)
+        ax.set_ylim([-10,10])
+        
+        ax.plot(feat_info['feat_delta_corr'])
+        ax.set_xlabel('feat_delta')
+
+        # feature
+        
+        ax =  fig.add_subplot(1, 8, 8)
+        ax.set_ylim([-10,10])
+        
+        ax.plot(feat_info['feat_diff_corr'])
+        ax.set_xlabel('feat_diff')
+
+        output_fn = os.path.join(output_dir, 'feat_%d.jpg' % i)
+        fig.savefig(output_fn)
+
+
+
+
+
+
+
+
+
+
 
 if __name__ == '__main__':
 
-    video_analyze()
+    # corr_analyze(*sys.argv[1::])
+    feat_analyze(*sys.argv[1::])

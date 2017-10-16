@@ -2,6 +2,17 @@
 
 import argparse
 
+def opts_to_string(opts_lst):
+
+    opts_str = ''
+    for opt_name, opt in opts_lst:
+        if not isinstance(opt, dict):
+            opt = vars(opt)
+        opts_str += (opt_name + '\n')
+        opts_str += '\n'.join(['  %-20s: %s' % (k,v) for k,v in opt.iteritems()])
+        opts_str += '\n\n'
+    return opts_str
+
 
 def parse_command():
     parser = argparse.ArgumentParser()
@@ -348,6 +359,8 @@ def parse_opts_test():
     parser.add_argument('--output_rst', type = int, default = 1, choices = [0, 1],
         help = 'output predicted age of each sample to a pkl file')
 
+    parser.add_argument('--output_feat', type = int, default = 1, choices = [0,1],
+        help = 'output feature of each sample to a h5 file')
 
     # data
     parser.add_argument('--dataset', type = str, default = 'imdb_wiki_good',
@@ -376,16 +389,10 @@ def parse_opts_test():
     return opts
     
 
-def opts_to_string(opts_lst):
 
-    opts_str = ''
-    for opt_name, opt in opts_lst:
-        if not isinstance(opt, dict):
-            opt = vars(opt)
-        opts_str += (opt_name + '\n')
-        opts_str += '\n'.join(['  %-20s: %s' % (k,v) for k,v in opt.iteritems()])
-        opts_str += '\n\n'
-    return opts_str
+
+
+
 
 if __name__ == '__main__':
 

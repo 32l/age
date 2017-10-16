@@ -497,3 +497,10 @@ class L2NormLoss(nn.Module):
         bsz = input_1.size(0)
 
         return (input_1 - input_2).norm(p = 2) / bsz
+
+
+class BlankLoss(nn.Module):
+
+    def forward(self, input_1, input_2 = None):
+        return input_1.sum() / input_1.size(0)
+

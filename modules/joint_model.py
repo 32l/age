@@ -101,8 +101,8 @@ class JointModel(nn.Module):
         self.feat_size = opts.feat_size
         self.feat_embed = nn.Linear(self.cnn_feat_size, self.feat_size, bias = False)
         self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(p = opts.dropout)
-
+        # self.dropout = nn.Dropout(p = opts.dropout)
+        self.dropout = nn.Dropout(p = 0)
 
 
         # age estimation
@@ -303,6 +303,97 @@ class JointModel(nn.Module):
         input:
             feat: output of feat_embed layer (before relu)
         output:
+            pert_loss
+        '''
+        opts = self.pert_opts
+
+        if opts['guide_signal'] == 'pose':
+            guide_cls = self.pose_cls
+        elif opts['guide_signal'] == 'attr':
+            guide_cls = self.attr_cls
+
+
+        # compute guide signal
+        feat = feat.detach()
+        feat.requires_grad = True
+        feat.volatile = False
+        
+        feat = feat.clone()
+        feat.retain_grad()
+
+        guide_out = guide_cls(self.relu(feat))[:, opts['guide_index']]
+
+        # compute feature perturbation by backward
+        guide_out.sum().backward()
+        feat_delta = feat.grad
+
+        # normalization
+        scale = opts['scale'] * (feat.norm(dim = 1, keepdim = True) / feat_delta.norm(dim = 1, keepdim = True))
+        feat_delta_n = feat_delta * scale
+
+        feat_delta_n.detach_()
+        feat_delta_n.volatile = False
+        feat_delta_n.requires_grad = False
+        
+        guide_cls.zero_grad()
+
+        return feat_delta_n
+
+    def _age_gradient(self, feat_age):
+        '''
+        compute age branch gradient direction in age_embed layer
+
+        input:
+            feat_age: output of age_embed layer (before relu)
+        '''
+
+        cls = self.age_cls
+
+        feat = feat_age.detach()
+        feat.requires_grad = True
+        feat.volatile = False
+        feat = feat.clone()
+        feat.retain_grad()
+
+        age_fc_out = cls.cls(cls.relu(feat))
+
+        if self.opts.cls_type == 'dex':
+            # deep expectation
+            age_scale = np.arange(self.opts.min_age, self.opts.max_age + 1, 1.0)
+            age_scale = Variable(age_fc_out.data.new(age_scale)).unsqueeze(1)
+            
+            age_out = torch.matmul(F.softmax(age_fc_out), age_scale).view(-1)
+            
+        elif self.opts.cls_type == 'oh':
+            # ordinal hyperplane
+            age_fc_out = F.sigmoid(age_fc_out)
+            age_out = age_fc_out.sum(dim = 1) + self.opts.min_age
+
+        elif self.opts.cls_type == 'reg':
+            # regression
+            age_out = self.age_fc_out.view(-1) + self.opts.min_age
+
+
+        age_out.sum().backward()
+        age_grad = feat.grad
+
+        # normalization
+        age_grad = age_grad / age_grad.norm(p = 2, dim = 1, keepdim = True)
+
+        age_grad.detach_()
+        age_grad.volatile = False
+        age_grad.requires_grad = False
+
+        cls.cls.zero_grad()
+
+        return age_grad
+
+    def perturb_feat_debug(self, feat):
+        '''
+        attribute-guided feature perturbation
+        input:
+            feat: output of feat_embed layer (before relu)
+        output:
             feat_pert: same size as feat
         '''
         opts = self.pert_opts
@@ -323,7 +414,7 @@ class JointModel(nn.Module):
         feat_relu = self.relu(feat)
         guide_out = guide_cls(feat_relu)[:, opts['guide_index']]
 
-        # compute feature perturbation by backforward
+        # compute feature perturbation by backward
         guide_out.sum().backward()
         feat_delta = feat.grad
 
@@ -335,110 +426,108 @@ class JointModel(nn.Module):
         feat_delta_n.volatile = False
         feat_delta_n.requires_grad = False
         
-        if opts['debug']:
-            for s in np.arange(0.05, 0.51, 0.05).tolist():
-                bsz = feat.size(0)
-                scale = s * (feat.norm(dim = 1, keepdim = True) / feat_delta.norm(dim = 1, keepdim = True))
-                
-                feat_delta_s = feat_delta * scale
-
-                feat_pert = self.relu(torch.cat([feat + feat_delta_s, feat - feat_delta_s]))
-                guide_out_pert = guide_cls(feat_pert)[:, opts['guide_index']].contiguous()
-                age_out_pert, _ = self._compute_age(feat_pert)
-
-                # compute feat_age
-                feat_age = self.age_cls.relu(self.age_cls.embed(feat))
-                feat_age_pert = self.age_cls.relu(self.age_cls.embed(feat_pert))
-                feat_age_delta = feat_age_pert[0:bsz] - feat_age_pert[bsz::]
-
-                # compute feat_guide
-                feat_guide = guide_cls.relu(guide_cls.embed(feat))
-                feat_guide_pert = guide_cls.relu(guide_cls.embed(feat_pert))
-                feat_guide_delta = feat_guide_pert[0:bsz] - feat_guide_pert[bsz::]
-
-                mean_scale = scale.mean().data[0]
-                mean_guide_pert = (guide_out_pert[0:bsz] - guide_out_pert[bsz::]).mean().data[0]
-                mean_age_pert = (age_out_pert[0:bsz] - age_out_pert[bsz::]).abs().mean().data[0]
-
-
-                ####### perturbation informatin #########
-                print('#####################################################')
-                print('scale: %f' % s)
-                print('feat_perturb_scale:')
-                print((feat_delta_s.norm(dim = 1) / feat.norm(dim = 1)).mean().data[0])
-                
-                print('feat_age_perturb_scale:')
-                print((feat_age_delta.norm(dim = 1) / feat_age.norm(dim = 1)).mean().data[0])
-
-                print('guide_perturb_scale:')
-                print((feat_guide_delta.norm(dim = 1) / feat_guide.norm(dim = 1)).mean().data[0])
-
-                print('perturbation_debug_info: mean_scale: %f,   mean_guide_pert: %f,   mean_age_pert: %f' %\
-                    (mean_scale, mean_guide_pert, mean_age_pert))
-
-            ####### within video difference #########
-            print('#####################################################')
-            seq_len = 8
-            feat = feat.view(-1, seq_len, feat.size(1))
-            feat_diff = feat[:,0:-1,:] - feat[:, 1::,:]
-            
-
-            feat_age = feat_age.view(-1, seq_len, feat_age.size(1))
-            feat_age_diff = feat_age[:,0:-1,:] - feat_age[:,1::,:]
-
-            feat_guide = feat_guide.view(-1, seq_len, feat_guide.size(1))
-            feat_guide_diff = feat_guide[:,0:-1,:] - feat_guide[:,1::,:]
-
-            age_out,_ = self._compute_age(feat_relu)
-            age_out = age_out.contiguous().view(-1, seq_len)
-            age_diff = age_out[:,0:-1] - age_out[:,1::]
-
-            guide_out = guide_out.contiguous().view(-1, seq_len)
-            guide_diff = guide_out[:,0:-1] - guide_out[:,1::]
-
-
-            print('frame_feat_diff_scale:')
-            print((feat_diff.norm(dim = 2).mean(dim = 1)/feat.norm(dim = 2).mean(dim = 1)).mean().data[0])
-
-            print('frame_feat_age_diff_scale:')
-            print((feat_age_diff.norm(dim = 2).mean(dim = 1)/feat_age.norm(dim = 2).mean(dim = 1)).mean().data[0])
-
-            print('frame_feat_guide_diff_scale:')
-            print((feat_guide_diff.norm(dim = 2).mean(dim = 1)/feat_guide.norm(dim = 2).mean(dim = 1)).mean().data[0])
-
-            print('frame_age_diff:')
-            print(age_diff.abs().mean().data[0])
-
-            print('frame_guide_diff:')
-            print(guide_diff.abs().mean().data[0])
-
-
-            ###### between video difference #########
-            print('-----------------------------------------------------')
-            feat = feat.mean(dim = 1)
-            feat_diff = feat[0:-1,:] - feat[1::,:]
-
-            feat_age = feat_age.mean(dim = 1)
-            feat_age_diff = feat_age[0:-1,:] - feat_age[1::,:]
-
-            feat_guide = feat_guide.mean(dim = 1)
-            feat_guide_diff = feat_guide[0:-1,:] - feat_guide[1::,:]
-
-            print('video_feat_diff_scale:')
-            print((feat_diff.norm(dim = 1).mean()/feat.norm(dim = 1).mean()).data[0])
-
-            print('video_feat_age_diff_scale:')
-            print((feat_age_diff.norm(dim = 1).mean()/feat_age.norm(dim = 1).mean()).data[0])
-
-            print('video_feat_guide_diff_scale:')
-            print((feat_guide_diff.norm(dim = 1).mean()/feat_guide.norm(dim = 1).mean()).data[0])
-            print('#####################################################')
         
-            exit(0)
+        for s in np.arange(0.05, 0.51, 0.05).tolist():
+            bsz = feat.size(0)
+            scale = s * (feat.norm(dim = 1, keepdim = True) / feat_delta.norm(dim = 1, keepdim = True))
+            
+            feat_delta_s = feat_delta * scale
 
-        guide_cls.zero_grad()
+            feat_pert = self.relu(torch.cat([feat + feat_delta_s, feat - feat_delta_s]))
+            guide_out_pert = guide_cls(feat_pert)[:, opts['guide_index']].contiguous()
+            age_out_pert, _ = self._compute_age(feat_pert)
 
-        return feat_delta_n
+            # compute feat_age
+            feat_age = self.age_cls.relu(self.age_cls.embed(feat))
+            feat_age_pert = self.age_cls.relu(self.age_cls.embed(feat_pert))
+            feat_age_delta = feat_age_pert[0:bsz] - feat_age_pert[bsz::]
+
+            # compute feat_guide
+            feat_guide = guide_cls.relu(guide_cls.embed(feat))
+            feat_guide_pert = guide_cls.relu(guide_cls.embed(feat_pert))
+            feat_guide_delta = feat_guide_pert[0:bsz] - feat_guide_pert[bsz::]
+
+            mean_scale = scale.mean().data[0]
+            mean_guide_pert = (guide_out_pert[0:bsz] - guide_out_pert[bsz::]).mean().data[0]
+            mean_age_pert = (age_out_pert[0:bsz] - age_out_pert[bsz::]).abs().mean().data[0]
+
+
+            ####### perturbation informatin #########
+            print('#####################################################')
+            print('scale: %f' % s)
+            print('feat_perturb_scale:')
+            print((feat_delta_s.norm(dim = 1) / feat.norm(dim = 1)).mean().data[0])
+            
+            print('feat_age_perturb_scale:')
+            print((feat_age_delta.norm(dim = 1) / feat_age.norm(dim = 1)).mean().data[0])
+
+            print('guide_perturb_scale:')
+            print((feat_guide_delta.norm(dim = 1) / feat_guide.norm(dim = 1)).mean().data[0])
+
+            print('perturbation_debug_info: mean_scale: %f,   mean_guide_pert: %f,   mean_age_pert: %f' %\
+                (mean_scale, mean_guide_pert, mean_age_pert))
+
+        ####### within video difference #########
+        print('#####################################################')
+        seq_len = 8
+        feat = feat.view(-1, seq_len, feat.size(1))
+        feat_diff = feat[:,0:-1,:] - feat[:, 1::,:]
+        
+
+        feat_age = feat_age.view(-1, seq_len, feat_age.size(1))
+        feat_age_diff = feat_age[:,0:-1,:] - feat_age[:,1::,:]
+
+        feat_guide = feat_guide.view(-1, seq_len, feat_guide.size(1))
+        feat_guide_diff = feat_guide[:,0:-1,:] - feat_guide[:,1::,:]
+
+        age_out,_ = self._compute_age(feat_relu)
+        age_out = age_out.contiguous().view(-1, seq_len)
+        age_diff = age_out[:,0:-1] - age_out[:,1::]
+
+        guide_out = guide_out.contiguous().view(-1, seq_len)
+        guide_diff = guide_out[:,0:-1] - guide_out[:,1::]
+
+
+        print('frame_feat_diff_scale:')
+        print((feat_diff.norm(dim = 2).mean(dim = 1)/feat.norm(dim = 2).mean(dim = 1)).mean().data[0])
+
+        print('frame_feat_age_diff_scale:')
+        print((feat_age_diff.norm(dim = 2).mean(dim = 1)/feat_age.norm(dim = 2).mean(dim = 1)).mean().data[0])
+
+        print('frame_feat_guide_diff_scale:')
+        print((feat_guide_diff.norm(dim = 2).mean(dim = 1)/feat_guide.norm(dim = 2).mean(dim = 1)).mean().data[0])
+
+        print('frame_age_diff:')
+        print(age_diff.abs().mean().data[0])
+
+        print('frame_guide_diff:')
+        print(guide_diff.abs().mean().data[0])
+
+
+        ###### between video difference #########
+        print('-----------------------------------------------------')
+        feat = feat.mean(dim = 1)
+        feat_diff = feat[0:-1,:] - feat[1::,:]
+
+        feat_age = feat_age.mean(dim = 1)
+        feat_age_diff = feat_age[0:-1,:] - feat_age[1::,:]
+
+        feat_guide = feat_guide.mean(dim = 1)
+        feat_guide_diff = feat_guide[0:-1,:] - feat_guide[1::,:]
+
+        print('video_feat_diff_scale:')
+        print((feat_diff.norm(dim = 1).mean()/feat.norm(dim = 1).mean()).data[0])
+
+        print('video_feat_age_diff_scale:')
+        print((feat_age_diff.norm(dim = 1).mean()/feat_age.norm(dim = 1).mean()).data[0])
+
+        print('video_feat_guide_diff_scale:')
+        print((feat_guide_diff.norm(dim = 1).mean()/feat_guide.norm(dim = 1).mean()).data[0])
+        print('#####################################################')
+    
+        exit(0)
+
+        
 
 
     def forward(self, data, joint_test = False):
@@ -497,18 +586,36 @@ class JointModel(nn.Module):
         cnn_feat = cnn_feat.view(cnn_feat.size(0), -1)
         feat = self.feat_embed(cnn_feat)
         
+        # perturbation debug
+        # self.perturb_feat_debug(feat[0:bsz_age])
+
         # perturbation
         if self.pert_opts['enable'] and bsz_age > 0:
             feat_comm = feat[0:bsz_age]
-            feat_delta = self.perturb_feat(feat_comm)
-            assert feat_comm.is_same_size(feat_delta)
+            feat_comm_delta = self.perturb_feat(feat_comm)
+            feat_comm_pert = torch.cat([feat_comm + feat_comm_delta, feat_comm - feat_comm_delta])
 
-            feat_comm_pert = torch.cat([feat_comm + feat_delta, feat_comm - feat_delta])
-            feat_age_pert = self.age_cls.embed(self.relu(feat_comm_pert))
-            pert_out = [feat_age_pert[0:bsz_age], feat_age_pert[bsz_age::]]
+
+            if self.pert_opts['mode'] == 'age_embed_L2':
+                
+                feat_age_pert = self.age_cls.embed(self.relu(feat_comm_pert))
+                feat_age_delta = feat_age_pert[0:bsz_age] - feat_age_pert[bsz_age::]
+                pert_out = feat_age_delta.norm(p = 2, dim = 1)
+
+            elif self.pert_opts['mode'] == 'age_embed_cos':
+
+                # compute age gradient
+                feat_age = self.age_cls.embed(self.relu(feat_comm))
+                age_grad = self._age_gradient(feat_age)
+
+                feat_age_pert = self.age_cls.embed(self.relu(feat_comm_pert))
+                feat_age_delta = feat_age_pert[0:bsz_age] - feat_age_pert[bsz_age::]
+
+                pert_age_cos = (age_grad*feat_age_delta).sum(dim = 1) / age_grad.norm(p = 2, dim = 1) / feat_age_delta.norm(p=2, dim=1)
+                pert_out = pert_age_cos * pert_age_cos / 2
+                
         else:
             pert_out = None
-        
 
         # forward classifiers
         feat_relu = self.dropout(self.relu(feat))
@@ -540,7 +647,6 @@ class JointModel(nn.Module):
 
 
         return age_out, age_fc_out, pose_out, attr_out, pert_out
-
 
     def forward_video(self, data):
         '''
@@ -578,8 +684,7 @@ class JointModel(nn.Module):
             age_fc_out = age_fc_out.view(bsz_age, max_len, -1)
             
             if pert_out is not None:
-                pert_out[0] = pert_out[0].view(bsz_age, max_len, -1)
-                pert_out[1] = pert_out[1].view(bsz_age, max_len, -1)
+                pert_out = pert_out.view(bsz_age, max_len, -1)
 
 
         return age_out, age_fc_out, pose_out, attr_out, pert_out
@@ -619,6 +724,61 @@ class JointModel(nn.Module):
             attr_out = attr_out.view(bsz, max_len, -1)
 
         return age_out, age_fc_out, pose_out, attr_out
+
+
+    def forward_extract_feat(self, img):
+        '''
+        Extract img feature at feat_embed, age_embed, pose_embed and attr_embed
+
+        Input:
+            img (Tensor): [bsz, 3, 224, 224] for image, [bsz, max_len, 3, 224, 224] for video
+        Ourput:
+            feat (Tensor): common feature
+            feat_age (Tensor): age branch feature
+            feat_pose (Tensor): pose branch feature
+            feat_attr (Tensor): attribute branch feature
+            others (lilst)
+        '''
+
+        if img.dim() == 5:
+            is_video = True
+            bsz, max_len = img.size()[0:2]
+            img_sz = img.size()[2::]
+            img = img.view(bsz * max_len, *img_sz)
+            
+        else:
+            is_video = False
+
+
+        cnn_feat = self.cnn(img)
+        cnn_feat = cnn_feat.view(cnn_feat.size(0), -1)
+        feat = self.feat_embed(cnn_feat)
+
+        feat_relu = self.relu(feat)
+        feat_age = self.age_cls.embed(feat_relu)
+
+        
+        feat_pose = self.pose_cls.embed(feat_relu)
+        feat_attr = self.attr_cls.embed(feat_relu)
+
+        self.pert_opts['guide_signal'] = 'pose'
+        self.pert_opts['guide_index'] = 0
+        self.pert_opts['scale'] = 1
+
+        feat_delta = self.perturb_feat(feat)
+        age_grad = self._age_gradient(feat_age)
+
+        
+        if is_video:
+            feat = feat.view(bsz, max_len, -1)
+            feat_age = feat_age.view(bsz, max_len, -1)
+            feat_pose = feat_pose.view(bsz, max_len, -1)
+            feat_attr = feat_attr.view(bsz, max_len, -1)
+            feat_delta = feat_delta.view(bsz, max_len, -1)
+            age_grad = age_grad.view(bsz, max_len, -1)
+
+        return feat, feat_age, feat_pose, feat_relu, feat_delta, age_grad
+
 
 
 def train_model(model, train_opts):
@@ -687,7 +847,6 @@ def train_model(model, train_opts):
     else:
         attr_train_loader = None
         attr_test_loader = None
-
 
 
     ### create optimizer
@@ -1222,7 +1381,7 @@ def train_model_video(model, train_opts):
     crit_age = misc.Smooth_Loss(misc.Video_Loss(crit_age))
     meas_age = misc.Video_Age_Analysis()
 
-    crit_pert = misc.L2NormLoss()
+    crit_pert = misc.BlankLoss()
     crit_pert = misc.Smooth_Loss(misc.Video_Loss(crit_pert, same_sz = True))
 
     if train_opts.train_pose == 1:
@@ -1357,7 +1516,7 @@ def train_model_video(model, train_opts):
 
             if model.pert_opts['enable']:
                 assert pert_out is not None
-                loss += crit_pert(pert_out[0], pert_out[1], seq_len_age) * train_opts.loss_weight_pert
+                loss += crit_pert(pert_out, pert_out.clone(), seq_len_age) * train_opts.loss_weight_pert
                 
 
             # backward
@@ -1488,7 +1647,7 @@ def train_model_video(model, train_opts):
                 meas_age.add(age_out, age_gt, seq_len_age, age_std)
 
                 if model.pert_opts['enable']:
-                    loss = crit_pert(pert_out[0], pert_out[1], seq_len_age)
+                    loss = crit_pert(pert_out, pert_out.clone(), seq_len_age)
 
 
 
@@ -1672,6 +1831,13 @@ def test_model_video(model, test_opts):
     pose_pred = []
     attr_pred = []
 
+    feat = []
+    feat_age = []
+    feat_pose = []
+    feat_attr = []
+    feat_delta = []
+    age_grad = []
+
     for batch_idx, data in enumerate(test_loader):
 
         img_seq, seq_len, age_gt, age_std = data
@@ -1697,6 +1863,16 @@ def test_model_video(model, test_opts):
                     attr_pred.append(attr_out.data.cpu()[i,0:l,:].numpy().tolist())
                 else:
                     attr_pred.append(None)
+
+        if test_opts.output_feat == 1:
+            f, f_age, f_pose, f_attr, f_delta, age_g = model.forward_extract_feat(img_seq)
+            feat.append(f.data.cpu().numpy())
+            feat_age.append(f_age.data.cpu().numpy())
+            feat_pose.append(f_pose.data.cpu().numpy())
+            feat_attr.append(f_attr.data.cpu().numpy())
+            feat_delta.append(f_delta.data.cpu().numpy())
+            age_grad.append(age_g.data.cpu().numpy())
+
 
         print('\rTesting %d/%d (%.2f%%)' % (batch_idx, len(test_loader), 100.*batch_idx/len(test_loader)), end = '')
         sys.stdout.flush()
@@ -1741,6 +1917,21 @@ def test_model_video(model, test_opts):
 
         fn_rst = os.path.join(output_dir, 'video_age_v%s_test_rst.pkl' % test_opts.dataset_version)
         io.save_data(rst, fn_rst)
+
+    if test_opts.output_feat == 1:
+        id_lst = test_dset.id_lst
+        feat = np.concatenate(feat)
+        feat_age = np.concatenate(feat_age)
+        feat_pose = np.concatenate(feat_pose)
+        feat_attr = np.concatenate(feat_attr)
+        feat_delta = np.concatenate(feat_delta)
+        age_grad = np.concatenate(age_grad)
+
+        feat_dict = {s_id: {'feat': f, 'feat_age': f_age, 'feat_pose': f_pose, 'feat_attr': f_attr, 'feat_delta': f_delta, 'age_grad': age_g} 
+        for s_id, f, f_age, f_pose, f_attr, f_delta, age_g in zip(id_lst, feat, feat_age, feat_pose, feat_attr, feat_delta, age_grad)}
+
+        fn_feat = os.path.join(output_dir, 'video_age_v%s_feat.pkl' % test_opts.dataset_version)
+        io.save_data(feat_dict, fn_feat)
 
 
 
