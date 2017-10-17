@@ -113,15 +113,16 @@ def load_video_age_dataset(version = '2.0', subset = 'test', split = '', crop_si
         raise Exception('Invalid version of video_age dataset: %s' % version)
 
     if subset == 'train':
-        transform = StandardFaceTransform(flip = True, crop_size = crop_size)
         if split != '':
             subset = 'train_' + split
-
+        flip = True
     else:
-        transform = StandardFaceTransform(flip = False, crop_size = crop_size)
+        flip = False
+            
+    transform = StandardFaceTransform(flip = False, crop_size = crop_size)
 
     return Video_Age_Dataset(subset = subset, age_fn = age_fn, video_fn = video_fn, 
-        split_fn = split_fn, transform = transform, **argv)
+        split_fn = split_fn, transform = transform, flip = flip, **argv)
 
 
 
@@ -398,7 +399,7 @@ class Attribute_Dataset(data.Dataset):
         return img, attr
 
 class Video_Age_Dataset(data.Dataset):
-    def __init__(self, subset, age_fn, video_fn, split_fn, mode = 'video', max_len = 17, age_rng = None, transform = None, debug = 0):
+    def __init__(self, subset, age_fn, video_fn, split_fn, mode = 'video', max_len = 17, age_rng = None, transform = None, flip = False, debug = 0):
         '''
         subset: train, train_0.1, train_0.2, train_0.5, test
         '''
@@ -413,6 +414,7 @@ class Video_Age_Dataset(data.Dataset):
         self.mode = mode
         self.transform = transform
         self.debug = debug
+        self.flip = flip
 
         if self.age_rng:
             self.id_lst = [s_id for s_id in self.id_lst if self.age_rng[0] <= va_age[s_id]['age'] <= self.age_rng[1]]
@@ -421,8 +423,8 @@ class Video_Age_Dataset(data.Dataset):
         self.video_lst = [va_video[s_id] for s_id in self.id_lst]
 
         self.len = len(self.id_lst)
-        print('[Video_Age_Dataset]\nsubset: %s\nsample: %d\nmode: %s\nage range: %s\nsplit_fn: %s\nage_fn: %s\nvideo_fn: %s\n' %\
-            (subset, self.len, self.mode, self.age_rng, split_fn, age_fn, video_fn))
+        print('[Video_Age_Dataset]\nsubset: %s\nsample: %d\nmode: %s\nflip: %s\nage range: %s\nsplit_fn: %s\nage_fn: %s\nvideo_fn: %s\n' %\
+            (subset, self.len, self.mode, self.flip, self.age_rng, split_fn, age_fn, video_fn))
 
 
     def __len__(self):
@@ -439,6 +441,8 @@ class Video_Age_Dataset(data.Dataset):
 
         if self.debug == 1:
             index = 0
+        
+        flip = self.flip and np.random.rand() > 0.5
 
         age = self.age_lst[index]['age']
         std = self.age_lst[index]['std']
@@ -447,6 +451,9 @@ class Video_Age_Dataset(data.Dataset):
         img_seq = []
         for f in self.video_lst[index]['frames'][0:seq_len]:
             img = Image.open(f['image']).convert('RGB')
+            if flip:
+                img = img.transpose(Image.FLIP_LEFT_RIGHT)
+            
             img = self.transform(img)
             img_seq.append(img)
 
