@@ -60,11 +60,13 @@ def parse_opts_gan_model():
     parser.add_argument('--G_h0', type = int, default = 128,
         help = 'latent space dimenssion of generator')
 
-    parser.add_argument('--gand_dropout', type = float, default = 0.25,
+    parser.add_argument('--gan_dropout', type = float, default = 0.25,
         help = 'dropout rate for GAN model')
 
 
     opts = parser.parse_known_args()[0]
+
+    return opts
 
 
 def basic_train_opts_parser():
@@ -109,12 +111,12 @@ def basic_train_opts_parser():
         choices = ['0.1', '0.2', '0.5', ''],
         help = 'video_age dataset training split')
 
-    parser.add_argument('--video_max_len', type = int, default = 17,
+    parser.add_argument('--video_max_len', type = int, default = 2,
         help = 'max frame number in each video sample')
 
 
     # optimization
-    parser.add_argument('--max_epochs', type = int, default = 30,
+    parser.add_argument('--max_epochs', type = int, default = 15,
         help = 'number of training epochs')
 
     parser.add_argument('--batch_size', type = int, default = 32,
@@ -126,7 +128,7 @@ def basic_train_opts_parser():
     parser.add_argument('--lr', type = float, default = 1e-3,
         help = 'learning rate')
 
-    parser.add_argument('--lr_decay', type = int, default = 10,
+    parser.add_argument('--lr_decay', type = int, default = 5,
         help = 'every how many epochs does the learning rate decay')
 
     parser.add_argument('--lr_decay_rate', type = float, default = 0.1,

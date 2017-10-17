@@ -27,9 +27,9 @@ def weights_init(m):
         if m.bias is not None:
             m.bias.data.fill_(0.0)
 
-    elif classname.fine('BatchNorm') != -1:
+    elif classname.find('BatchNorm') != -1:
         m.weight.data.normal_(1.0, 0.02)
-        m.bias.fill_(0.0)
+        m.bias.data.fill_(0.0)
 
 
 class GANModel(nn.Module):
@@ -111,7 +111,7 @@ class GANModel(nn.Module):
             raise Exception('invalid age classifier type: %s' % opts.cls_type)
 
         self.age_cls = nn.Sequential(OrderedDict([
-                ('fc0', nn.Linear(self.feat_size, opts.age_fc_size, bias = True)),
+                ('fc0', nn.Linear(self.cnn_feat_size, opts.age_fc_size, bias = True)),
                 ('relu', nn.ReLU()),
                 ('dropout', nn.Dropout(p = opts.dropout)),
                 ('cls', nn.Linear(opts.age_fc_size, output_size, bias = True))
@@ -122,18 +122,18 @@ class GANModel(nn.Module):
         # generator
 
         self.G_net = nn.Sequential(OrderedDict([
-            ('fc0', nn.Linear(self.feat_size + opts.noise_dim, opts.G_h0)),
+            ('fc0', nn.Linear(self.cnn_feat_size + opts.noise_dim, opts.G_h0)),
             ('bn0', nn.BatchNorm1d(opts.G_h0)),
             ('elu0', nn.ELU()),
             ('dropout0', nn.Dropout(p = opts.gan_dropout)),
-            ('fc1', nn.Linear(self.G_h0, self.feat_size))
+            ('fc1', nn.Linear(opts.G_h0, self.cnn_feat_size))
             ]))
 
 
         # discriminator
         self.D_net = nn.Sequential(OrderedDict([
             ('relu', nn.ReLU()),
-            ('fc0', nn.Linear(self.feat_size, 1, bias = False)),
+            ('fc0', nn.Linear(self.cnn_feat_size, 1, bias = False)),
             ('sigmoid', nn.Sigmoid())
             ]))
 
@@ -150,7 +150,7 @@ class GANModel(nn.Module):
 
         elif fn_cnn:
             print('[GANModel.init loading CNN weights from %s' % fn_cnn)
-            model_info = torch.load(fn, map_location=lambda storage, loc: storage)
+            model_info = torch.load(fn_cnn, map_location=lambda storage, loc: storage)
             self.cnn.load_state_dict(model_info['cnn_state_dict'])
 
             for m in [self.age_cls, self.G_net, self.D_net]:
@@ -269,7 +269,7 @@ def pretrain(model, train_opts):
 
     ### move model to GPU
     if torch.cuda.device_count() > 1:
-        model.cnn = nn.DataParaleel(model.cnn)
+        model.cnn = nn.DataParallel(model.cnn)
     model.cuda()
 
 
@@ -282,7 +282,7 @@ def pretrain(model, train_opts):
 
     train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
         num_workers = 4, pin_memory = True)
-    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 32, 
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 16, 
         num_workers = 4, pin_memory = True)
 
 
@@ -360,7 +360,7 @@ def pretrain(model, train_opts):
             pg['lr'] = lr * pg['lr_mult']
 
         # train one epoch
-        for batch_size, age_data in enumerate(train_loader):
+        for batch_idx, data in enumerate(train_loader):
 
             optimizer.zero_grad()
 
@@ -414,10 +414,24 @@ def pretrain(model, train_opts):
                     }
                     pavi.log(phase = 'train', iter_num = iteration, outputs = pavi_outputs)
 
-            # update epoch index
-            epoch += 1
+        # update epoch index
+        epoch += 1
 
-            # test
+
+        # test
+        if train_opts.test_interval > 0 and epoch % train_opts.test_interval == 0:
+
+            # set test model
+            model.eval()
+
+            # clear buffer
+            crit_age.clear()
+            meas_age.clear()
+
+            # set test iteration
+            test_iter = train_opts.test_iter if train_opts.test_iter > 0 else len(test_loader)    
+
+            
             for batch_idx, data in enumerate(test_loader):
 
                 img_seq, seq_len, age_gt, age_std = data
@@ -509,7 +523,7 @@ if __name__ == '__main__':
     if command == 'pretrain':
 
         model_opts = opt_parser.parse_opts_gan_model()
-        train_opts = opt_parser.parse_opts_train()
+        train_opts = opt_parser.parse_opts_pretrain()
 
         os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in train_opts.gpu_id])
 
