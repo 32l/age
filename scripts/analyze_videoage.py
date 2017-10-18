@@ -221,7 +221,7 @@ def feat_analyze(model_id):
     # config
     num_sample = 20
     num_corr_feat = 20
-    skip_top_sample = 50
+    skip_top_sample = 0
 
     import matplotlib.pyplot as plt
     import matplotlib.image as mpimg
@@ -282,6 +282,9 @@ def feat_analyze(model_id):
             })
 
 
+    for feat_info in feat_out:
+        print(feat_info['id'])
+    exit(0)
     
     output_dir = os.path.join('output/video_age_feat_analysis/%s' % model_id)
     io.mkdir_if_missing(output_dir)

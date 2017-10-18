@@ -120,23 +120,26 @@ class GANModel(nn.Module):
 
         # GAN
         # generator
-
-        self.G_net = nn.Sequential(OrderedDict([
-            ('fc0', nn.Linear(self.cnn_feat_size + opts.noise_dim, opts.G_h0)),
-            ('bn0', nn.BatchNorm1d(opts.G_h0)),
-            ('elu0', nn.ELU()),
-            ('dropout0', nn.Dropout(p = opts.gan_dropout)),
-            ('fc1', nn.Linear(opts.G_h0, self.cnn_feat_size))
-            ]))
-
+        g_hidden_lst = [self.cnn_feat_size] + opts.G_hidden + [self.cnn_feat_size]
+        g_layers = OrderedDict()
+        for n, (dim_in, dim_out) in enumerate(zip(g_hidden_lst, g_hidden_lst[1::])):
+            g_layers['fc%d'%n] = nn.Linear(dim_in, dim_out, bias = False)
+            if n < len(g_hidden_lst) - 2:
+                g_layers['bn%d'%n] = nn.BatchNorm1d(dim_out)
+                g_layers['relu%d'%n] = nn.ReLU()
+        self.G_net = nn.Sequential(g_layers)
 
         # discriminator
-        self.D_net = nn.Sequential(OrderedDict([
-            ('relu', nn.ReLU()),
-            ('fc0', nn.Linear(self.cnn_feat_size, 1, bias = False)),
-            ('sigmoid', nn.Sigmoid())
-            ]))
-
+        d_hidden_lst = [self.cnn_feat_size * 2] + opts.D_hidden +[1]
+        d_layers = OrderedDict()
+        d_layers['relu'] = nn.ReLU()
+        for n, (dim_in, dim_out) in enumerate(zip(d_hidden_lst, d_hidden_lst[1::])):
+            d_layers['fc%d'%n] = nn.Linear(dim_in, dim_out, bias = False)
+            if n < len(d_hidden_lst) - 2:
+                d_layers['bn%d'%n] = nn.BatchNorm1d(dim_out)
+                d_layers['leaky_relu%d'%n] = nn.LeakyReLU(0.2)
+        d_layers['sigmoid'] = nn.Sigmoid()
+        self.D_net = nn.Sequential(d_layers)
 
         
         # init weight
