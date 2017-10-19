@@ -491,16 +491,28 @@ class Pose_MAE():
 
 class L2NormLoss(nn.Module):
 
-    def forward(self, input_1, input_2):
-        assert input_1.is_same_size(input_2)
+    def forward(self, out_1, out_2):
+        assert out_1.is_same_size(out_2)
 
-        bsz = input_1.size(0)
+        bsz = out_1.size(0)
 
-        return (input_1 - input_2).norm(p = 2) / bsz
+        return (out_1 - out_2).norm(p = 2) / bsz
 
 
 class BlankLoss(nn.Module):
 
-    def forward(self, input_1, input_2 = None):
-        return input_1.sum() / input_1.size(0)
+    def forward(self, out_1, out_2 = None):
+        return out_1.sum() / out_1.size(0)
+
+class BCEAccuracy(nn.Module):
+
+    def forward(self, out, label):
+
+        if isinstance(out, Variable):
+            out = out.data
+        if isinstance(label, Variable):
+            label = label.data
+
+        return ((out >= 0.5) & (label == 1)) | ((out < 0.5) & (label == 0)).float().sum() / label.numel()
+
 

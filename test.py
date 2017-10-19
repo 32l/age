@@ -1,3 +1,7 @@
-import argparse
+def f():
+    return 1
 
-print('Test github windows')
+print('call 1')
+_ = f()
+print('call 2')
+f()
