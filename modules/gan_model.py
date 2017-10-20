@@ -37,17 +37,13 @@ class GANModel(nn.Module):
     def _update_opts(self, opts):
         return opts
 
-    def __init__(self, opts = None, fn = None, fn_cnn = None):
+    def __init__(self, opts = None, fn = None):
         '''
         Create an age model. Input should be one of following combinations:
 
             opts:   
                 Create model architecture by input options. cnn is initiated by weights pretrained on ImageNet,
                 cls is initiated by random weights.
-
-            opts + fn_cnn:
-                Create model architecture by input options. cnn is loaded from fn_cnn, cls is initiated by
-                random weights.
 
             fn:
                 Load model architecture and all model weights from fn.
@@ -56,11 +52,6 @@ class GANModel(nn.Module):
         '''
 
         assert (opts or fn), 'Error: either "opts" or "fn" should be provided'
-
-        print('[GAN.init] fn: %s' % fn)
-        print('[GAN.init] fn_cnn: %s' % fn_cnn)
-        # print('[JointModel.init] opts: %s' % opts)
-
 
         super(GANModel, self).__init__()
 
@@ -126,7 +117,9 @@ class GANModel(nn.Module):
             g_layers['fc%d'%n] = nn.Linear(dim_in, dim_out, bias = False)
             if n < len(g_hidden_lst) - 2:
                 g_layers['bn%d'%n] = nn.BatchNorm1d(dim_out)
-                g_layers['relu%d'%n] = nn.ReLU()
+                # g_layers['leaky_relu%d'%n] = nn.LeakyReLU(0.2)
+                # g_layers['relu%d'%n] = nn.ReLU()
+                g_layers['elu%d'%n] = nn.ELU()
         self.G_net = nn.Sequential(g_layers)
 
         # discriminator
@@ -136,30 +129,17 @@ class GANModel(nn.Module):
         for n, (dim_in, dim_out) in enumerate(zip(d_hidden_lst, d_hidden_lst[1::])):
             d_layers['fc%d'%n] = nn.Linear(dim_in, dim_out, bias = False)
             if n < len(d_hidden_lst) - 2:
-                d_layers['bn%d'%n] = nn.BatchNorm1d(dim_out)
+                if opts.D_bn == 1:
+                    d_layers['bn%d'%n] = nn.BatchNorm1d(dim_out)
                 d_layers['leaky_relu%d'%n] = nn.LeakyReLU(0.2)
         d_layers['sigmoid'] = nn.Sigmoid()
         self.D_net = nn.Sequential(d_layers)
-
+        
         
         # init weight
         if fn:
-            print('[GANModel.init] loading weights from %s' % fn)
-            model_info = torch.load(fn, map_location=lambda storage, loc: storage)
-            self.cnn.load_state_dict(model_info['cnn_state_dict'])
-            self.age_cls.load_state_dict(model_info['age_cls_state_dict'])
-            self.G_net.load_state_dict(model_info['G_net_state_dict'])
-            self.D_net.load_state_dict(model_info['D_net_state_dict'])
-
-        elif fn_cnn:
-            print('[GANModel.init loading CNN weights from %s' % fn_cnn)
-            model_info = torch.load(fn_cnn, map_location=lambda storage, loc: storage)
-            self.cnn.load_state_dict(model_info['cnn_state_dict'])
-
-            for m in [self.age_cls, self.G_net, self.D_net]:
-                m.apply(weights_init)
+            self.load_model(fn)
         else:
-
             for m in [self.age_cls, self.G_net, self.D_net]:
                 m.apply(weights_init)
 
@@ -179,7 +159,6 @@ class GANModel(nn.Module):
 
 
     def save_model(self, fn):
-
         model_info = {
             'opts': self.opts,
             'cnn_state_dict': self._get_state_dict(self.cnn),
@@ -189,6 +168,18 @@ class GANModel(nn.Module):
         }
 
         torch.save(model_info, fn)
+
+
+    def load_model(self, fn, modules = None):
+
+        if modules is None:
+            modules = ['cnn', 'age_cls', 'G_net', 'D_net']
+
+        model_info = torch.load(fn, map_location=lambda storage, loc: storage)
+
+        for m_name in modules:
+            self.__getattr__(m_name).load_state_dict(model_info['%s_state_dict' % m_name])
+            print('[GANModel.load_model] %s <= %s' % (m_name, fn))
 
 
 
@@ -252,7 +243,7 @@ class GANModel(nn.Module):
 
         img_seq = img_seq.view(bsz * max_len, img_seq.size(2), img_seq.size(3), img_seq.size(4))
 
-        age_out, fc_out = self.forward(img_seq)
+        age_out, fc_out, feat = self.forward(img_seq)
 
         age_out = age_out.view(bsz, max_len)
         fc_out = fc_out.view(bsz, max_len, -1)
@@ -286,7 +277,7 @@ def pretrain(model, train_opts):
 
     train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
         num_workers = 4, pin_memory = True)
-    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 16, 
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 128, 
         num_workers = 4, pin_memory = True)
 
 
@@ -521,7 +512,6 @@ def pretrain(model, train_opts):
 
 
 
-
 def train_gan(model, train_opts):
 
     if not train_opts.id.startswith('gan_'):
@@ -540,7 +530,8 @@ def train_gan(model, train_opts):
         crop_size = train_opts.crop_size, age_rng = [model.opts.min_age, model.opts.max_age],
         split = train_opts.train_split, max_len = 2)
     test_dset = dataset.load_video_age_dataset(version = train_opts.dataset_version, subset = 'test',
-        crop_size = train_opts.crop_size, age_rng = [model.opts.min_age, model.opts.max_age])
+        crop_size = train_opts.crop_size, age_rng = [model.opts.min_age, model.opts.max_age],
+        max_len = 2)
 
     train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
         num_workers = 4, pin_memory = True)
@@ -549,21 +540,32 @@ def train_gan(model, train_opts):
 
     ### create optimizer
     # use Adam
-    optimizer_G = torch.optim.Adam(model.G_net.parameters(), lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta), 
-            eps = train_opts.optim_epsilon, weight_decay = train_opts.weight_decay)
+    optimizer_G = torch.optim.Adam(model.G_net.parameters(), lr = train_opts.lr * train_opts.G_lr_mult, betas = (train_opts.optim_alpha, train_opts.optim_beta), 
+            eps = train_opts.optim_epsilon)
 
-    optimizer_D = torch.optim.Adam(model.D_net.parameters(), lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta),
-            eps = train_opts.optim_epsilon, weight_decay = train_opts.weight_decay)
+    optimizer_D = torch.optim.Adam(model.D_net.parameters(), lr = train_opts.lr * train_opts.D_lr_mult, betas = (train_opts.optim_alpha, train_opts.optim_beta),
+            eps = train_opts.optim_epsilon)
 
     ### loss function
     crit_G = misc.Smooth_Loss(nn.BCELoss()) # G Loss
     crit_D_R = misc.Smooth_Loss(nn.BCELoss()) # D loss with feat_real
     crit_D_F = misc.Smooth_Loss(nn.BCELoss()) # D loss with feat_fake
+
+    # GAN observer
     meas_D_R = misc.Smooth_Loss(misc.BlankLoss()) # D(feat_real)
     meas_D_F1 = misc.Smooth_Loss(misc.BlankLoss()) # D(feat_fake) when training D
     meas_D_F2 = misc.Smooth_Loss(misc.BlankLoss()) # D(feat_fake) when training G
     meas_acc = misc.Smooth_Loss(misc.BCEAccuracy()) # D classification acc
-    meas_age = misc.Smooth_Loss(nn.L1Loss()) # age estimation difference between feat_real and feat_fake
+    
+    # Age observer
+    meas_age_mae = misc.Smooth_Loss(nn.L1Loss()) # age estimation MAE
+    meas_age_diff_real = misc.Smooth_Loss(nn.L1Loss()) # age estimation difference between feat_in and feat_real
+    meas_age_diff_fake = misc.Smooth_Loss(nn.L1Loss()) # age estimation difference between feat_in and feat_fake
+
+    # Feature norm observer
+    meas_feat_diff_fake = misc.Smooth_Loss(misc.BlankLoss()) # (feat_res norm) / (feat_in norm)
+    meas_feat_diff_real = misc.Smooth_Loss(misc.BlankLoss()) # (feat_real-feat_in norm) / (feat_in norm)
+    meas_grad_norm = misc.Smooth_Loss(misc.BlankLoss()) # (feat_res grad norm)
 
     ### output information
     output_dir = os.path.join('models', train_opts.id)
@@ -595,8 +597,8 @@ def train_gan(model, train_opts):
 
 
     ### main training loop
-    real_label = 1
-    fake_label = 0
+    real_label = 1.
+    fake_label = 0.
 
     epoch = 0
     while epoch < train_opts.max_epochs:
@@ -606,35 +608,45 @@ def train_gan(model, train_opts):
 
         # update learning rate
         lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay))
-        optimizer_G.param_groups[0]['lr'] = lr
-        optimizer_D.param_groups[0]['lr'] = lr
 
         # train one epoch
         for batch_idx, data in enumerate(train_loader):
+            iteration = batch_idx + epoch*len(train_loader)
+
+            optimizer_D.param_groups[0]['lr'] = lr * train_opts.D_lr_mult
+
+            if iteration < train_opts.D_pretrain_iter:
+                optimizer_G.param_groups[0]['lr'] = 0
+            else:
+                optimizer_G.param_groups[0]['lr'] = lr * train_opts.G_lr_mult
 
             ### extract feature
-            img_pair, _, _, _ = data
-            bsz = img_pair.size(0)
-
+            img_pair, seq_len, age_gt, _ = data
             img_pair = Variable(img_pair).cuda()
+            age_gt = Variable(age_gt.float()).cuda()
 
-            age_out, _, feat = model.forward_video()
+            bsz = img_pair.size(0) * 2
+
+            age_out, _, feat = model.forward_video(img_pair, seq_len)
             feat.detach_()
             age_out.detach_()
 
-            feat_in, feat_real = feat[:,0,:], feat[:,1,:]
-            age_in, age_real = age_out[:,0], age_out[0:1]
+            feat_in = torch.cat((feat[:,0,:], feat[:,1,:]))
+            feat_real = torch.cat((feat[:,1,:], feat[:,0,:]))
+            age_in = torch.cat((age_out[:,0], age_out[:,1]))
+            age_real = torch.cat((age_out[:,1], age_out[:,0]))
+            age_gt = torch.cat((age_gt, age_gt))
 
             #### train D_net
             optimizer_D.zero_grad()
 
             # train with real
             out = model.D_net(torch.cat((feat_in, feat_real), dim = 1))
-            label = Variable(torch.FloatTensor(bsz).fill_(real_label)).cuda()
+            label = Variable(torch.FloatTensor(bsz, 1).fill_(real_label)).cuda()
             
             loss_real = crit_D_R(out, label)
             _ = meas_acc(out, label)
-            _ = meas_D_R(out, out)
+            _ = meas_D_R(out, None)
             
 
             loss_real.backward()
@@ -642,14 +654,14 @@ def train_gan(model, train_opts):
             # train with fake
             noise = Variable(torch.FloatTensor(bsz, model.opts.noise_dim).normal_(0, 1)).cuda()
             feat_res = model.G_net(torch.cat((feat_in, noise), dim = 1))
-            feat_fake = (feat_res + feat_res)
+            feat_fake = feat_in + feat_res
 
             out = model.D_net(torch.cat((feat_in, feat_fake.detach()), dim = 1))
-            label = Variable(torch.FloatTensor(bsz).fill_(fake_label)).cuda()
+            label = Variable(torch.FloatTensor(bsz, 1).fill_(fake_label)).cuda()
 
             loss_fake = crit_D_F(out, label)
             _ = meas_acc(out, label)
-            _ = meas_D_F1(out, out)
+            _ = meas_D_F1(out, None)
 
             loss_fake.backward()
 
@@ -659,24 +671,219 @@ def train_gan(model, train_opts):
             
             ### train generator
             optimizer_G.zero_grad()
-
+            feat_fake.retain_grad() # grad of feat_fake is quivalent to grad of feat_res
             out = model.D_net(torch.cat((feat_in, feat_fake), dim = 1))
-            label = Variable(torch.FloatTensor(bsz).fill_(real_label)).cuda()
+            label = Variable(torch.FloatTensor(bsz, 1).fill_(real_label)).cuda()
             
             loss_g = crit_G(out, label)
-            _ = meas_D_F2(out, out)
+            _ = meas_D_F2(out, None)
 
             loss_g.backward()
             optimizer_G.step()
 
+            ### observations
+            age_fake, _ = model._forward_age_cls(feat_fake)
+            _ = meas_age_mae(age_in, age_gt)
+            _ = meas_age_diff_real(age_real, age_in)
+            _ = meas_age_diff_fake(age_fake, age_in)
+
+
+            feat_norm = feat_in.norm(p = 2, dim = 1, keepdim = True)
+            _ = meas_feat_diff_fake(feat_res.norm(p = 2, dim = 1, keepdim = True) / feat_norm, None)
+            _ = meas_feat_diff_real((feat_real - feat_in).norm(p = 2, dim = 1, keepdim = True) / feat_norm, None)
+            _ = meas_grad_norm(feat_fake.grad.norm(p = 2, dim = 1, keepdim = True), None)
 
 
             ### display
             if batch_idx % train_opts.display_interval == 0:
 
+                loss_g = crit_G.smooth_loss(clear = True)
+                loss_d = (crit_D_R.smooth_loss(clear = True) + crit_D_F.smooth_loss(clear = True)) / 2
+                D_real = meas_D_R.smooth_loss(clear = True)
+                D_fake_1 = meas_D_F1.smooth_loss(clear = True)
+                D_fake_2 = meas_D_F2.smooth_loss(clear = True)
+                D_acc = meas_acc.smooth_loss(clear = True)
+
+                age_mae = meas_age_mae.smooth_loss(clear = True)
+                ad_real = meas_age_diff_real.smooth_loss(clear = True)
+                ad_fake = meas_age_diff_fake.smooth_loss(clear = True)
+                fd_real = meas_feat_diff_real.smooth_loss(clear = True)
+                fd_fake = meas_feat_diff_fake.smooth_loss(clear = True)
+                grad_g = meas_grad_norm.smooth_loss(clear = True)
 
 
+                log = '[%s] [%s] Train Epoch %d [%d/%d (%.2f%%)] LR: %.3e   Loss_G: %.6f   loss_D: %.6f' % \
+                    (time.ctime(), train_opts.id, epoch, batch_idx * train_loader.batch_size, len(train_loader.dataset), 100.*batch_idx / len(train_loader),
+                        lr, loss_g, loss_d)
+                log += '\n\tD_real: %.6f   D_fake: %.6f / %.6f   D_acc: %.2f' % (D_real, D_fake_1, D_fake_2, D_acc * 100.)
+                log += '\n\t Age MAE: [GT: %.2f   Real: %.2f   Fake: %.2f]' % (age_mae, ad_real, ad_fake)
+                log += '\n\t Feat Diff: [Real: %.6f   Fake: %.6f]  Feat Grad: %.6f' % (fd_real, fd_fake, grad_g)
 
+                print(log)
+                print(log, file = fout)
+
+                
+                info['train_history'].append({
+                    'iteration': iteration,
+                    'epoch': epoch,
+                    'Loss_G': loss_g,
+                    'loss_D': loss_d,
+                    'D_real': D_real,
+                    'D_fake_1': D_fake_1,
+                    'D_fake_2': D_fake_2,
+                    'D_acc': D_acc,
+                    'age_mae': age_mae,
+                    'ad_real': ad_real,
+                    'ad_fake': ad_fake,
+                    'fd_real': fd_real,
+                    'fd_fake': fd_fake,
+                    'grad_g': grad_g
+                    })
+
+                if train_opts.pavi == 1:
+                    pavi_outputs = {
+                        'Loss_G': loss_g,
+                        'loss_D': loss_d,
+                        'D_real_upper': D_real,
+                        'D_fake_upper': D_fake_1,
+                        'D_acc_upper': D_acc,
+                    }
+                    pavi.log(phase = 'train', iter_num = iteration, outputs = pavi_outputs)
+
+        ### update epoch index
+        epoch += 1
+
+        ### test
+        if train_opts.test_interval > 0 and epoch % train_opts.test_interval == 0:
+
+            # set test mode
+            model.eval()
+
+            # clear loss buffer
+            for lb in [crit_G, crit_D_R, crit_D_F, meas_D_R, meas_D_F1, meas_D_F2, meas_acc,\
+                        meas_age_mae, meas_age_diff_real, meas_age_diff_fake,\
+                        meas_feat_diff_real, meas_feat_diff_fake, meas_grad_norm]:
+                lb.clear()
+
+            # set test iteration
+            test_iter = train_opts.test_iter if train_opts.test_iter > 0 else len(test_loader)
+
+            for batch_idx, data in enumerate(test_loader):
+
+
+                img_pair, seq_len, age_gt, _ = data
+                img_pair = Variable(img_pair).cuda()
+                age_gt = Variable(age_gt.float()).cuda()
+
+                bsz = img_pair.size(0) * 2
+
+                age_out, _, feat = model.forward_video(img_pair, seq_len)
+                feat.detach_()
+                age_out.detach_()
+
+                feat_in = torch.cat((feat[:,0,:], feat[:,1,:]))
+                feat_real = torch.cat((feat[:,1,:], feat[:,0,:]))
+                age_in = torch.cat((age_out[:,0], age_out[:,1]))
+                age_real = torch.cat((age_out[:,1], age_out[:,0]))
+                age_gt = torch.cat((age_gt, age_gt))
+
+                noise = Variable(torch.FloatTensor(bsz, model.opts.noise_dim).normal_(0, 1)).cuda()
+                feat_res = model.G_net(torch.cat((feat_in, noise), dim = 1))
+                feat_fake = feat_in + feat_res
+
+                # forward real
+                out = model.D_net(torch.cat((feat_in, feat_real), dim = 1))
+                label = Variable(torch.FloatTensor(bsz, 1).fill_(real_label)).cuda()
+
+                _ = crit_D_R(out, label)
+                _ = meas_acc(out, label)
+                _ = meas_D_R(out, None)
+
+                # forward fake
+                out = model.D_net(torch.cat((feat_in, feat_fake), dim = 1))
+                label = Variable(torch.FloatTensor(bsz, 1).fill_(fake_label)).cuda()
+
+                _ = crit_D_F(out, label)
+                _ = meas_acc(out, label)
+                _ = meas_D_F1(out, None)
+
+                label = Variable(torch.FloatTensor(bsz, 1).fill_(real_label)).cuda()
+                _ = crit_G(out, label)
+
+                # observations
+                age_fake, _ = model._forward_age_cls(feat_fake)
+                _ = meas_age_mae(age_in, age_gt)
+                _ = meas_age_diff_real(age_real, age_in)
+                _ = meas_age_diff_fake(age_fake, age_in)
+
+                feat_norm = feat_in.norm(p = 2, dim = 1, keepdim = True)
+                _ = meas_feat_diff_fake(feat_res.norm(p = 2, dim = 1, keepdim = True) / feat_norm, None)
+                _ = meas_feat_diff_real((feat_real - feat_in).norm(p = 2, dim = 1, keepdim = True) / feat_norm, None)
+
+
+                print('\rTesting %d/%d (%.2f%%)' % (batch_idx, test_iter, 100.*batch_idx/test_iter), end = '')
+                sys.stdout.flush()
+
+                if batch_idx + 1 == test_iter:
+                    break
+            print('\n')
+
+
+            # display test result
+            loss_g = crit_G.smooth_loss(clear = True)
+            loss_d = (crit_D_R.smooth_loss(clear = True) + crit_D_F.smooth_loss(clear = True)) / 2
+            D_real = meas_D_R.smooth_loss(clear = True)
+            D_fake = meas_D_F1.smooth_loss(clear = True)
+            D_acc = meas_acc.smooth_loss(clear = True)
+
+            age_mae = meas_age_mae.smooth_loss(clear = True)
+            ad_real = meas_age_diff_real.smooth_loss(clear = True)
+            ad_fake = meas_age_diff_fake.smooth_loss(clear = True)
+            fd_real = meas_feat_diff_real.smooth_loss(clear = True)
+            fd_fake = meas_feat_diff_fake.smooth_loss(clear = True)
+
+            log = '[%s] [%s] Test Epoch %d   Loss_G: %.6f   loss_D: %.6f' % \
+                (time.ctime(), train_opts.id, epoch, loss_g, loss_d)
+            log += '\n\tD_real: %.6f   D_fake: %.6f   D_acc: %.2f' % (D_real, D_fake_1, D_acc * 100.)
+            log += '\n\t Age MAE: [GT: %.2f   Real: %.2f   Fake: %.2f]' % (age_mae, ad_real, ad_fake)
+            log += '\n\t Feat Diff: [Real: %.6f   Fake: %.6f]' % (fd_real, fd_fake)
+
+
+            print(log)
+            print(log, file = fout)
+
+            iteration = epoch * len(train_loader)
+            info['test_history'].append({
+                'iteration': iteration,
+                'epoch': epoch,
+                'Loss_G': loss_g,
+                'loss_D': loss_d,
+                'D_real': D_real,
+                'D_fake': D_fake,
+                'D_acc': D_acc,
+                'age_mae': age_mae,
+                'ad_real': ad_real,
+                'ad_fake': ad_fake,
+                'fd_real': fd_real,
+                'fd_fake': fd_fake,
+                })
+
+            if train_opts.pavi == 1:
+                pavi_outputs = {
+                    'Loss_G': loss_g,
+                    'loss_D': loss_d,
+                    'D_real_upper': D_real,
+                    'D_fake_upper': D_fake,
+                    'D_acc_upper': D_acc,
+                }
+                pavi.log(phase = 'test', iter_num = iteration, outputs = pavi_outputs)
+
+
+        if train_opts.snapshot_interval > 0 and epoch % train_opts.snapshot_interval == 0:
+            _snapshot(epoch)
+
+    # final snapshot
+    _snapshot(epoch = 'final')
 
 
 if __name__ == '__main__':
@@ -690,15 +897,35 @@ if __name__ == '__main__':
 
         os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in train_opts.gpu_id])
 
-        # cnn file
+        # load pretrained model
         if not train_opts.pre_id.endswith('.pth'):
-            fn_cnn = os.path.join('models', train_opts.pre_id, 'best.pth')
+            fn = os.path.join('models', train_opts.pre_id, 'best.pth')
         else:
-            fn_cnn = train_opts.pre_id
+            fn = train_opts.pre_id
 
-        model = GANModel(opts = model_opts, fn_cnn = fn_cnn)
+        model = GANModel(opts = model_opts)
+        model.load_model(fn, modules = ['cnn'])
 
         pretrain(model, train_opts)
+
+    elif command == 'train_gan':
+
+        model_opts = opt_parser.parse_opts_gan_model()
+        train_opts = opt_parser.parse_opts_train_gan()
+
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in train_opts.gpu_id])
+
+        # load pretrained model
+        if not train_opts.pre_id.endswith('.pth'):
+            fn = os.path.join('models', train_opts.pre_id, 'best.pth')
+        else:
+            fn = train_opts.pre_id
+
+        model = GANModel(opts = model_opts)
+        model.load_model(fn, modules = ['cnn', 'age_cls'])
+
+        train_gan(model, train_opts)
+
 
     else:
         raise Exception('invalid command "%s"' % command)

@@ -19,8 +19,14 @@ class Smooth_Loss():
 
     def __call__(self, out, gt, *extra_input):
         loss = self.crit(out, gt, *extra_input)
-        self.buffer.append(loss.data[0])
         self.weight_buffer.append(out.size(0))
+
+        if isinstance(loss, Variable):
+            self.buffer.append(loss.data[0])
+        elif isinstance(loss, torch.tensor._TensorBase):
+            self.buffer.append(loss[0])
+        else:
+            self.buffer.append(loss)
 
         return loss
 
@@ -28,8 +34,11 @@ class Smooth_Loss():
         self.buffer = []
         self.weight_buffer = []
 
-    def smooth_loss(self):
-        return sum([l * w for l, w in zip(self.buffer, self.weight_buffer)]) / sum(self.weight_buffer)
+    def smooth_loss(self, clear = False):
+        loss = sum([l * w for l, w in zip(self.buffer, self.weight_buffer)]) / sum(self.weight_buffer)
+        if clear:
+            self.clear()
+        return loss
 
 
 class Video_Loss():
@@ -513,6 +522,6 @@ class BCEAccuracy(nn.Module):
         if isinstance(label, Variable):
             label = label.data
 
-        return ((out >= 0.5) & (label == 1)) | ((out < 0.5) & (label == 0)).float().sum() / label.numel()
+        return (((out >= 0.5) & (label >= 0.5)) | ((out < 0.5) & (label < 0.5))).float().sum() / label.numel()
 
 
