@@ -57,7 +57,7 @@ def parse_opts_gan_model():
     parser.add_argument('--noise_dim', type = int, default = 100,
         help = 'noise signal dimension')
 
-    parser.add_argument('--G_hidden', type = int, default = [128], nargs = '*',
+    parser.add_argument('--G_hidden', type = int, default = [128, 32, 128], nargs = '*',
         help = 'latent space dimenssion of generator')
 
     parser.add_argument('--D_hidden', type = int, default = [128], nargs = '*',

@@ -140,7 +140,7 @@ class GANModel(nn.Module):
         self.D_net = nn.Sequential(d_layers)
         
         
-        # init weight
+        # init weight1
         if fn:
             self.load_model(fn)
         else:
@@ -770,6 +770,7 @@ def train_gan(model, train_opts):
                     pavi_outputs = {
                         'Loss_G': loss_g,
                         'loss_D': loss_d,
+                        'delta': fd_fake,
                         'D_real_upper': D_real,
                         'D_fake_upper': D_fake_1,
                         'D_acc_upper': D_acc,
@@ -906,6 +907,7 @@ def train_gan(model, train_opts):
                 pavi_outputs = {
                     'Loss_G': loss_g,
                     'loss_D': loss_d,
+                    'delta': fd_fake,
                     'D_real_upper': D_real,
                     'D_fake_upper': D_fake,
                     'D_acc_upper': D_acc,
