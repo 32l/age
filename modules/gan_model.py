@@ -123,7 +123,11 @@ class GANModel(nn.Module):
         self.G_net = nn.Sequential(g_layers)
 
         # discriminator
-        d_hidden_lst = [self.cnn_feat_size * 2] + opts.D_hidden +[1]
+        if opts.D_mode == 'cond':
+            d_hidden_lst = [self.cnn_feat_size * 2] + opts.D_hidden +[1]
+        else:
+            d_hidden_lst = [self.cnn_feat_size] + opts.D_hidden +[1]
+
         d_layers = OrderedDict()
         d_layers['relu'] = nn.ReLU()
         for n, (dim_in, dim_out) in enumerate(zip(d_hidden_lst, d_hidden_lst[1::])):
@@ -250,7 +254,6 @@ class GANModel(nn.Module):
         feat = feat.view(bsz, max_len, -1)
 
         return age_out, fc_out, feat
-
 
 
 
@@ -511,7 +514,6 @@ def pretrain(model, train_opts):
     fout.close()
 
 
-
 def train_gan(model, train_opts):
 
     if not train_opts.id.startswith('gan_'):
@@ -548,6 +550,7 @@ def train_gan(model, train_opts):
 
     ### loss function
     crit_G = misc.Smooth_Loss(nn.BCELoss()) # G Loss
+    crit_L2 = misc.Smooth_Loss(misc.BlankLoss()) # feat_res L2_norm
     crit_D_R = misc.Smooth_Loss(nn.BCELoss()) # D loss with feat_real
     crit_D_F = misc.Smooth_Loss(nn.BCELoss()) # D loss with feat_fake
 
@@ -613,7 +616,6 @@ def train_gan(model, train_opts):
         for batch_idx, data in enumerate(train_loader):
             iteration = batch_idx + epoch*len(train_loader)
 
-            optimizer_D.param_groups[0]['lr'] = lr * train_opts.D_lr_mult
 
             if iteration < train_opts.D_pretrain_iter:
                 optimizer_G.param_groups[0]['lr'] = 0
@@ -641,7 +643,11 @@ def train_gan(model, train_opts):
             optimizer_D.zero_grad()
 
             # train with real
-            out = model.D_net(torch.cat((feat_in, feat_real), dim = 1))
+            if model.opts.D_mode == 'cond':
+                    out = model.D_net(torch.cat((feat_in, feat_real), dim = 1))
+            else:
+                out = model.D_net(feat_real)
+
             label = Variable(torch.FloatTensor(bsz, 1).fill_(real_label)).cuda()
             
             loss_real = crit_D_R(out, label)
@@ -656,10 +662,15 @@ def train_gan(model, train_opts):
             feat_res = model.G_net(torch.cat((feat_in, noise), dim = 1))
             feat_fake = feat_in + feat_res
 
-            out = model.D_net(torch.cat((feat_in, feat_fake.detach()), dim = 1))
+            if model.opts.D_mode == 'cond':
+                out = model.D_net(torch.cat((feat_in, feat_fake.detach()), dim = 1))
+            else:
+                out = model.D_net(feat_fake.detach())
+
             label = Variable(torch.FloatTensor(bsz, 1).fill_(fake_label)).cuda()
 
             loss_fake = crit_D_F(out, label)
+
             _ = meas_acc(out, label)
             _ = meas_D_F1(out, None)
 
@@ -672,12 +683,26 @@ def train_gan(model, train_opts):
             ### train generator
             optimizer_G.zero_grad()
             feat_fake.retain_grad() # grad of feat_fake is quivalent to grad of feat_res
-            out = model.D_net(torch.cat((feat_in, feat_fake), dim = 1))
+            if model.opts.D_mode == 'cond':
+                out = model.D_net(torch.cat((feat_in, feat_fake), dim = 1))
+            else:
+                out = model.D_net(feat_fake)
             label = Variable(torch.FloatTensor(bsz, 1).fill_(real_label)).cuda()
             
+            # G loss
             loss_g = crit_G(out, label)
-            _ = meas_D_F2(out, None)
 
+            # L2 norm
+            l2_res = feat_res.norm(p = 2, dim = 1, keepdim = True)
+            l2_diff = (feat_real - feat_in).norm(p = 2, dim = 1, keepdim = True)
+            l2_threshold = Variable(torch.FloatTensor(l2_res.size()).fill_(l2_diff.max().data[0])).cuda()
+
+            loss_l2 = crit_L2(F.relu(l2_res - l2_threshold), None) * train_opts.G_l2_weight
+            
+
+            _ = meas_D_F2(out, None)     
+
+            loss_g = loss_g + loss_l2
             loss_g.backward()
             optimizer_G.step()
 
@@ -689,8 +714,8 @@ def train_gan(model, train_opts):
 
 
             feat_norm = feat_in.norm(p = 2, dim = 1, keepdim = True)
-            _ = meas_feat_diff_fake(feat_res.norm(p = 2, dim = 1, keepdim = True) / feat_norm, None)
-            _ = meas_feat_diff_real((feat_real - feat_in).norm(p = 2, dim = 1, keepdim = True) / feat_norm, None)
+            _ = meas_feat_diff_fake(l2_res / feat_norm, None)
+            _ = meas_feat_diff_real(l2_diff / feat_norm, None)
             _ = meas_grad_norm(feat_fake.grad.norm(p = 2, dim = 1, keepdim = True), None)
 
 
@@ -699,6 +724,7 @@ def train_gan(model, train_opts):
 
                 loss_g = crit_G.smooth_loss(clear = True)
                 loss_d = (crit_D_R.smooth_loss(clear = True) + crit_D_F.smooth_loss(clear = True)) / 2
+                loss_l2 = crit_L2.smooth_loss(clear = True)
                 D_real = meas_D_R.smooth_loss(clear = True)
                 D_fake_1 = meas_D_F1.smooth_loss(clear = True)
                 D_fake_2 = meas_D_F2.smooth_loss(clear = True)
@@ -712,9 +738,9 @@ def train_gan(model, train_opts):
                 grad_g = meas_grad_norm.smooth_loss(clear = True)
 
 
-                log = '[%s] [%s] Train Epoch %d [%d/%d (%.2f%%)] LR: %.3e   Loss_G: %.6f   loss_D: %.6f' % \
+                log = '[%s] [%s] Train Epoch %d [%d/%d (%.2f%%)] LR: %.3e   Loss_G: %.6f   loss_D: %.6f   loss_L2: %.6f' % \
                     (time.ctime(), train_opts.id, epoch, batch_idx * train_loader.batch_size, len(train_loader.dataset), 100.*batch_idx / len(train_loader),
-                        lr, loss_g, loss_d)
+                        lr, loss_g, loss_d, loss_l2)
                 log += '\n\tD_real: %.6f   D_fake: %.6f / %.6f   D_acc: %.2f' % (D_real, D_fake_1, D_fake_2, D_acc * 100.)
                 log += '\n\t Age MAE: [GT: %.2f   Real: %.2f   Fake: %.2f]' % (age_mae, ad_real, ad_fake)
                 log += '\n\t Feat Diff: [Real: %.6f   Fake: %.6f]  Feat Grad: %.6f' % (fd_real, fd_fake, grad_g)
@@ -792,7 +818,11 @@ def train_gan(model, train_opts):
                 feat_fake = feat_in + feat_res
 
                 # forward real
-                out = model.D_net(torch.cat((feat_in, feat_real), dim = 1))
+                if model.opts.D_mode == 'cond':
+                    out = model.D_net(torch.cat((feat_in, feat_real), dim = 1))
+                else:
+                    out = model.D_net(feat_real)
+
                 label = Variable(torch.FloatTensor(bsz, 1).fill_(real_label)).cuda()
 
                 _ = crit_D_R(out, label)
@@ -800,7 +830,11 @@ def train_gan(model, train_opts):
                 _ = meas_D_R(out, None)
 
                 # forward fake
-                out = model.D_net(torch.cat((feat_in, feat_fake), dim = 1))
+                if model.opts.D_mode == 'cond':
+                    out = model.D_net(torch.cat((feat_in, feat_fake), dim = 1))
+                else:
+                    out = model.D_net(feat_fake)
+
                 label = Variable(torch.FloatTensor(bsz, 1).fill_(fake_label)).cuda()
 
                 _ = crit_D_F(out, label)

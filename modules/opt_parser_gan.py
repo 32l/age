@@ -66,6 +66,10 @@ def parse_opts_gan_model():
     parser.add_argument('--D_bn', type = int, default = 0, choices = [0, 1],
         help = 'D_net contains BN layers')
 
+    parser.add_argument('--D_mode', type = str, default = 'no_cond',
+        choices = ['cond', 'no_cond'],
+        help = 'cond: D takes feat_in as condition; no_cond: D only takes feat_fake')
+
     parser.add_argument('--gan_dropout', type = float, default = 0.25,
         help = 'dropout rate for GAN model')
 
@@ -199,11 +203,14 @@ def parse_opts_train_gan():
     parser.add_argument('--G_lr_mult', type = float, default = 1.0,
         help = 'learning rate multiplier for G (should be <= 1.0)')
 
+    parser.add_argument('--G_l2_weight', type = float, default = 0.0,
+        help = 'L2-norm on generated feat_res')
+
     parser.add_argument('--D_pretrain_iter', type = int, default = 0,
         help = 'D pretrain iterations')
 
-    parser.add_argument('--G_pretrain_iter', type = int, default = 0,
-        help = 'G pretrain iterations')
+    # parser.add_argument('--G_pretrain_iter', type = int, default = 0,
+    #     help = 'G pretrain iterations')
 
     opts = parser.parse_known_args()[0]
 

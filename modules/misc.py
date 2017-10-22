@@ -35,7 +35,11 @@ class Smooth_Loss():
         self.weight_buffer = []
 
     def smooth_loss(self, clear = False):
-        loss = sum([l * w for l, w in zip(self.buffer, self.weight_buffer)]) / sum(self.weight_buffer)
+        if len(self.weight_buffer) == 0:
+            loss = 0
+        else:
+            loss = sum([l * w for l, w in zip(self.buffer, self.weight_buffer)]) / sum(self.weight_buffer)
+            
         if clear:
             self.clear()
         return loss
