@@ -703,10 +703,12 @@ def train_gan(model, train_opts):
     fake_label = 0.
 
     epoch = 0
+    model.eval()
     while epoch < train_opts.max_epochs:
 
         # set model mode
-        model.train()
+        model.G_net.train()
+        model.D_net.train()
 
         # update learning rate
         lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay))
