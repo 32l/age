@@ -18,7 +18,7 @@ def parse_command():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('command', type = str, default = 'help',
-        choices = ['pretrain', 'train_gan'])
+        choices = ['pretrain', 'train_gan', 'show_feat'])
 
     command = parser.parse_known_args()[0].command
 
@@ -78,6 +78,24 @@ def parse_opts_gan_model():
 
     return opts
 
+
+def parse_opts_test():
+    '''
+    Parse options for test model
+    '''
+    parser = argparse.ArgumentParser()
+    
+    # model
+    parser.add_argument('--id', type = str, default = 'default',
+        help = 'model id')
+    
+    parser.add_argument('--gpu_id', type = int, default = [0], nargs = '*',
+        help = 'GPU device id used for testing')
+    
+    
+    opts = parser.parse_known_args()[0]
+    
+    return opts
 
 def basic_train_opts_parser():
     '''
