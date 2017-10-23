@@ -13,12 +13,24 @@ def opts_to_string(opts_lst):
         opts_str += '\n\n'
     return opts_str
 
+def update_opts_from_dict(opts, opts_dict, exceptions = []):
+    
+    for k, v in opts_dict.iteritems():
+        if k in exceptions:
+            continue
+        
+        assert k in opts, '%s not in namespace' % k
+        opts.__dict__[k] = v
+    
+    return opts
+    
+        
 
 def parse_command():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('command', type = str, default = 'help',
-        choices = ['pretrain', 'train_gan', 'show_feat'])
+        choices = ['pretrain', 'train_gan', 'pretrain_gan', 'retrain', 'show_feat'])
 
     command = parser.parse_known_args()[0].command
 
@@ -96,6 +108,18 @@ def parse_opts_test():
     opts = parser.parse_known_args()[0]
     
     return opts
+
+    
+def parse_opts_retrain():
+    
+    parser = argparse.ArgumentParser()
+    
+    parser.add_argument('--id', type = str, default = 'default',
+        help = 'ID of model to retrain')
+    
+    parser.add_argument('--mode', type = str, default = 'train_gan',
+        choices = ['pretrain', 'pretrain_gan', 'train_gan'],
+        help = 'training mode ')
 
 def basic_train_opts_parser():
     '''
@@ -214,6 +238,9 @@ def parse_opts_train_gan():
 
     parser.add_argument('--pre_id', type = str, default = 'gan_pre_1.4',
         help = 'ID of pretrained model on age datasets')
+        
+    parser.add_argument('--gan_pretrained', type = int, default = 0,
+        help = 'set 1 if the GAN in pretrained model has been pretrained')
 
     parser.add_argument('--D_lr_mult', type = float, default = 1.0,
         help = 'learning rate multiplier for D (should be <= 1.0)')
@@ -224,8 +251,8 @@ def parse_opts_train_gan():
     parser.add_argument('--G_l2_weight', type = float, default = 0.0,
         help = 'L2-norm on generated feat_res')
 
-    parser.add_argument('--D_pretrain_iter', type = int, default = 0,
-        help = 'D pretrain iterations')
+    # parser.add_argument('--D_pretrain_iter', type = int, default = 0,
+    #     help = 'D pretrain iterations')
 
     # parser.add_argument('--G_pretrain_iter', type = int, default = 0,
     #     help = 'G pretrain iterations')
@@ -233,3 +260,28 @@ def parse_opts_train_gan():
     opts = parser.parse_known_args()[0]
 
     return opts
+    
+def parse_opts_pretrain_gan():
+    
+    parser = argparse.ArgumentParser(parents = [basic_train_opts_parser()])
+    
+    parser.add_argument('--pre_id', type = str, default = 'gan_pre_1.4',
+        help = 'ID of pretrained model on age datasets')
+    
+    parser.add_argument('--G_max_epochs', type = int, default = 10,
+        help = 'G pretrain epochs')
+    
+    parser.add_argument('--G_lr_decay', type = int, default = 5,
+        help = 'G learning rate decay')
+    
+    parser.add_argument('--D_max_epochs', type = int, default = 10,
+        help = 'D pretrain epochs')
+    
+    parser.add_argument('--D_max_epochs', type = int, default = 5,
+        help = 'D learning rate decay')
+    
+    opts = parser.parse_known_args()[0]
+    
+    return opts
+    
+    

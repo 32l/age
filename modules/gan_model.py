@@ -346,11 +346,13 @@ def pretrain(model, train_opts):
 
     ### main training loop
     epoch = 0
-
+    model.eval()
+    
     while epoch < train_opts.max_epochs:
 
         # set model mode
-        model.train()
+        model.G_net.train()
+        model.D_net.train()
 
         # update learning rate
         lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay))
@@ -514,12 +516,109 @@ def pretrain(model, train_opts):
     fout.close()
 
 
+def pretrain_gan(model, train_opts):
+    
+    if not train_opts.id.startswith('gan_'):
+        train_opts.id = 'gan_' + train_opts.id
+    
+    opts_str = opt_parser.opts_to_string([('model_opts', model.opts), ('train_opts', train_opts)])
+    print(opts_str)
+    
+    ### move model to GPU
+    if torch.cuda.device_count() > 1:
+        model.cnn = nn.DataParallel(model.cnn)
+    model.cuda()
+
+    ### load dataset
+    train_dset = dataset.load_video_age_dataset(version = train_opts.dataset_version, subset = 'train',
+        crop_size = train_opts.crop_size, age_rng = [model.opts.min_age, model.opts.max_age],
+        split = train_opts.train_split, max_len = 2)
+    test_dset = dataset.load_video_age_dataset(version = train_opts.dataset_version, subset = 'test',
+        crop_size = train_opts.crop_size, age_rng = [model.opts.min_age, model.opts.max_age],
+        max_len = 2)
+
+    train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
+        num_workers = 4, pin_memory = True)
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 16, 
+        num_workers = 4, pin_memory = True)
+
+    ### create optimizer
+    # use Adam
+    optimizer_G = torch.optim.Adam(model.G_net.parameters(), lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta), 
+            eps = train_opts.optim_epsilon)
+
+    optimizer_D = torch.optim.Adam(model.D_net.parameters(), lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta),
+            eps = train_opts.optim_epsilon)
+    
+    ### loss function
+    crit_G = misc.Smooth_Loss(nn.L1Loss()) # G Loss
+    crit_D_R = misc.Smooth_Loss(nn.BCELoss()) # D loss with feat_real
+    crit_D_F = misc.Smooth_Loss(nn.BCELoss()) # D loss with feat_fake
+
+    # GAN observer
+    meas_D_R = misc.Smooth_Loss(misc.BlankLoss()) # D(feat_real)
+    meas_D_F1 = misc.Smooth_Loss(misc.BlankLoss()) # D(feat_fake) when training D
+    meas_D_F2 = misc.Smooth_Loss(misc.BlankLoss()) # D(feat_fake) when training G
+    meas_acc = misc.Smooth_Loss(misc.BCEAccuracy()) # D classification acc
+    
+    # Age observer
+    meas_age_mae = misc.Smooth_Loss(nn.L1Loss()) # age estimation MAE
+    meas_age_diff_real = misc.Smooth_Loss(nn.L1Loss()) # age estimation difference between feat_in and feat_real
+    meas_age_diff_fake = misc.Smooth_Loss(nn.L1Loss()) # age estimation difference between feat_in and feat_fake
+
+    # Feature norm observer
+    meas_feat_diff_fake = misc.Smooth_Loss(misc.BlankLoss()) # (feat_res norm) / (feat_in norm)
+    meas_feat_diff_real = misc.Smooth_Loss(misc.BlankLoss()) # (feat_real-feat_in norm) / (feat_in norm)
+    meas_grad_norm = misc.Smooth_Loss(misc.BlankLoss()) # (feat_res grad norm)
+    
+    ### output information
+    output_dir = os.path.join('models', train_opts.id)
+    io.mkdir_if_missing(output_dir)
+    fn_info = os.path.join(output_dir, 'info.json')
+
+    info = {
+        'opts': vars(model.opts),
+        'train_opts': vars(train_opts),
+        'train_history': [],
+        'test_history': [],
+    }
+
+    def _snapshot(epoch):
+        fn_snapshot = os.path.join(output_dir, '%s.pth' % epoch)
+        print('saving checkpoint to %s' % fn_snapshot)
+        model.save_model(fn_snapshot)
+        io.save_json(info, fn_info)
+
+
+    # text_log
+    fout = open(os.path.join(output_dir, 'log.txt'), 'w')
+    print(opts_str, file = fout)
+
+    # pavi_log
+    if train_opts.pavi == 1:
+        pavi = PaviClient(username = 'ly015', password = '123456')
+        pavi.connect(model_name = train_opts.id, info = {'session_text': opts_str})
+
+    
+    ### main training loop
+    real_label = 1.
+    fake_label = 0.
+    
+    epoch = 0
+    while epoch < train_opts.max_epochs:
+        pass
+        
+    
+    
+    
+    
+
 def train_gan(model, train_opts):
 
     if not train_opts.id.startswith('gan_'):
         train_opts.id = 'gan_' + train_opts.id
 
-    opts_str = opts_str = opt_parser.opts_to_string([('model_opts', model.opts), ('train_opts', train_opts)])
+    opts_str = opt_parser.opts_to_string([('model_opts', model.opts), ('train_opts', train_opts)])
     print(opts_str)
 
     ### move model to GPU
@@ -611,16 +710,12 @@ def train_gan(model, train_opts):
 
         # update learning rate
         lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay))
-
+        optimizer_G.param_groups[0]['lr'] = lr * train_opts.G_lr_mult
+        optimizer_D.param_groups[0]['lr'] = lr * train_opts.D_lr_mult
+        
         # train one epoch
         for batch_idx, data in enumerate(train_loader):
             iteration = batch_idx + epoch*len(train_loader)
-
-
-            if iteration < train_opts.D_pretrain_iter:
-                optimizer_G.param_groups[0]['lr'] = 0
-            else:
-                optimizer_G.param_groups[0]['lr'] = lr * train_opts.G_lr_mult
 
             ### extract feature
             img_pair, seq_len, age_gt, _ = data
@@ -1046,9 +1141,62 @@ if __name__ == '__main__':
             fn = train_opts.pre_id
 
         model = GANModel(opts = model_opts)
-        model.load_model(fn, modules = ['cnn', 'age_cls'])
+        if train_opts.gan_pretrained == 0:
+            model.load_model(fn, modules = ['cnn', 'age_cls'])
+        else:
+            model.load_model(fn)
 
         train_gan(model, train_opts)
+    
+    elif command == 'retrain':
+        
+        model_opts = opt_parser.parse_opts_gan_model()
+        retrain_opts = opt_parser.parse_opts_retrain()
+        
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in retrain_opts.gpu_id])
+        
+        if retrain_opts.mode == 'pretrain':
+            train_opts = opt_parser.parse_opts_pretrain()
+        elif retrain_opts.mode == 'pretrain_gan':
+            train_opts = opt_parser.parse_opts_pretrain_gan()
+        elif retrain_opts.mode == 'train_gan':
+            train_opts = opt_parser.parse_opts_train_gan()
+        
+        # load training opts
+        train_info = io.load_json(os.path.join('models', retrain_opts.id, 'info.json'))
+        model_opts = opt_parser.update_opts_from_dict(model_opts, train_info['opts'])
+        train_opts = opt_parser.update_opts_from_dict(train_opts, train_info['train_opts'],
+            exceptions = ['gpu_id'])
+        
+        # load model
+        model = GANModel(opts = model.opts)
+        
+        # load pretrained model
+        if not train_opts.pre_id.endswith('.pth'):
+            fn = os.path.join('models', train_opts.pre_id, 'best.pth')
+        else:
+            fn = train_opts.pre_id
+        
+        if retrain_opts.mode == 'pretrain':
+            model.load_model(fn, modules = ['cnn'])
+            pretrain(model, train_opts)
+            
+        elif retrain_opts.mode == 'pretrain_gan':
+            model.load_model(fn, modules = ['cnn', 'age_cls'])
+            pretrain_gan(model, train_opts)
+            
+        elif retrain_opts.mode == 'train_gan':
+            if 'gan_pretrained' in train_opts and train_opts.gan_pretrained == 1:
+                model.load_model(fn)
+            else:
+                model.load_model(fn, modules = ['cnn', 'age_cls'])
+            train_gan(model, train_opts)
+        
+            
+        
+        
+        
+        
     
     elif command == 'show_feat':
         
@@ -1066,6 +1214,7 @@ if __name__ == '__main__':
         model = GANModel(fn = fn)
         
         show_feat(model, num_sample = 100, output_dir = output_dir)
+    
 
     else:
         raise Exception('invalid command "%s"' % command)
