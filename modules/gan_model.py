@@ -774,7 +774,7 @@ def pretrain_gan(model, train_opts):
             model.eval()
 
             # clear loss buffer
-            for lb in [crit_G, crit_D_R, crit_D_F, meas_D_R, meas_D_F， meas_acc,\
+            for lb in [crit_G, crit_D_R, crit_D_F, meas_D_R, meas_D_F, meas_acc,\
                         meas_age_mae, meas_age_diff_real, meas_age_diff_fake,\
                         meas_feat_diff_real, meas_feat_diff_fake, meas_grad_norm]:
                 lb.clear()
