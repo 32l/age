@@ -1154,7 +1154,6 @@ if __name__ == '__main__':
         model_opts = opt_parser.parse_opts_gan_model()
         retrain_opts = opt_parser.parse_opts_retrain()
         
-        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in retrain_opts.gpu_id])
         
         if retrain_opts.mode == 'pretrain':
             train_opts = opt_parser.parse_opts_pretrain()
@@ -1163,6 +1162,8 @@ if __name__ == '__main__':
         elif retrain_opts.mode == 'train_gan':
             train_opts = opt_parser.parse_opts_train_gan()
         
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in train_opts.gpu_id])
+
         # load training opts
         train_info = io.load_json(os.path.join('models', retrain_opts.id, 'info.json'))
         model_opts = opt_parser.update_opts_from_dict(model_opts, train_info['opts'])
@@ -1170,7 +1171,7 @@ if __name__ == '__main__':
             exceptions = ['gpu_id'])
         
         # load model
-        model = GANModel(opts = model.opts)
+        model = GANModel(opts = model_opts)
         
         # load pretrained model
         if not train_opts.pre_id.endswith('.pth'):

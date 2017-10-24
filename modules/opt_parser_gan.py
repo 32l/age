@@ -19,8 +19,11 @@ def update_opts_from_dict(opts, opts_dict, exceptions = []):
         if k in exceptions:
             continue
         
-        assert k in opts, '%s not in namespace' % k
-        opts.__dict__[k] = v
+        # assert k in opts, '%s not in namespace' % k
+        if k not in opts:
+            print('%s = %s been ignored' % (k,v))
+        else:
+            opts.__dict__[k] = v
     
     return opts
     
@@ -120,6 +123,10 @@ def parse_opts_retrain():
     parser.add_argument('--mode', type = str, default = 'train_gan',
         choices = ['pretrain', 'pretrain_gan', 'train_gan'],
         help = 'training mode ')
+
+    opts = parser.parse_known_args()[0]
+
+    return opts
 
 def basic_train_opts_parser():
     '''
