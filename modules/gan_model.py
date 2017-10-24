@@ -129,7 +129,7 @@ class GANModel(nn.Module):
             d_hidden_lst = [self.cnn_feat_size] + opts.D_hidden +[1]
 
         d_layers = OrderedDict()
-        d_layers['relu'] = nn.ReLU()
+        # d_layers['relu'] = nn.ReLU()
         for n, (dim_in, dim_out) in enumerate(zip(d_hidden_lst, d_hidden_lst[1::])):
             d_layers['fc%d'%n] = nn.Linear(dim_in, dim_out, bias = False)
             if n < len(d_hidden_lst) - 2:
@@ -557,8 +557,7 @@ def pretrain_gan(model, train_opts):
 
     # GAN observer
     meas_D_R = misc.Smooth_Loss(misc.BlankLoss()) # D(feat_real)
-    meas_D_F1 = misc.Smooth_Loss(misc.BlankLoss()) # D(feat_fake) when training D
-    meas_D_F2 = misc.Smooth_Loss(misc.BlankLoss()) # D(feat_fake) when training G
+    meas_D_F = misc.Smooth_Loss(misc.BlankLoss()) # D(feat_fake)
     meas_acc = misc.Smooth_Loss(misc.BCEAccuracy()) # D classification acc
     
     # Age observer
@@ -603,14 +602,312 @@ def pretrain_gan(model, train_opts):
     ### main training loop
     real_label = 1.
     fake_label = 0.
+    model.eval()
     
-    epoch = 0
-    while epoch < train_opts.max_epochs:
-        pass
+    epoch = 0    
+    while epoch < train_opts.G_max_epochs + train_opts.D_max_epochs:
         
-    
-    
-    
+        # set model mode
+                
+        # update learning rate
+        if epoch < train_opts.G_max_epochs:
+            lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.G_lr_decay))
+            optimizer_G.param_groups[0]['lr'] = lr
+            optimizer_D.param_groups[0]['lr'] = 0. # fix the parameter of D
+            model.G_net.train()
+            model.D_net.eval()
+        
+        else:
+            lr = train_opts * (train_opts.lr_decay_rate ** ((epoch - train_opts.G_max_epochs) // train_opts.D_lr_decay))
+            optimizer_G.param_groups[0]['lr'] = 0. # fix the parameters of G
+            optimizer_D.param_groups[0]['lr'] = lr
+            optimizer_G.eval()
+            optimizer_D.train()
+        
+        # train one epoch
+        for batch_idx, data in enumerate(train_loader):
+            iteration = batch_idx + epoch*len(train_loader)
+
+            ### extract feature
+            img_pair, seq_len, age_gt, _ = data
+            img_pair = Variable(img_pair).cuda()
+            age_gt = Variable(age_gt.float()).cuda()
+
+            bsz = img_pair.size(0) * 2
+
+            age_out, _, feat = model.forward_video(img_pair, seq_len)
+            feat.detach_()
+            age_out.detach_()
+
+            feat_in = torch.cat((feat[:,0,:], feat[:,1,:]))
+            feat_real = torch.cat((feat[:,1,:], feat[:,0,:]))
+            age_in = torch.cat((age_out[:,0], age_out[:,1]))
+            age_real = torch.cat((age_out[:,1], age_out[:,0]))
+            age_gt = torch.cat((age_gt, age_gt))
+
+            #### train D_net
+            # keep doing this part while pretraining G
+            optimizer_D.zero_grad()
+
+            # train with real
+            if model.opts.D_mode == 'cond':
+                    out = model.D_net(torch.cat((feat_in, feat_real), dim = 1))
+            else:
+                out = model.D_net(feat_real)
+
+            label = Variable(torch.FloatTensor(bsz, 1).fill_(real_label)).cuda()
+            
+            loss_real = crit_D_R(out, label)
+            _ = meas_acc(out, label)
+            _ = meas_D_R(out, None)
+            
+
+            loss_real.backward()
+
+            # train with fake
+            noise = Variable(torch.FloatTensor(bsz, model.opts.noise_dim).normal_(0, 1)).cuda()
+            feat_res = model.G_net(torch.cat((feat_in, noise), dim = 1))
+            feat_fake = F.relu(feat_in + feat_res)
+
+            if model.opts.D_mode == 'cond':
+                out = model.D_net(torch.cat((feat_in, feat_fake.detach()), dim = 1))
+            else:
+                out = model.D_net(feat_fake.detach())
+
+            label = Variable(torch.FloatTensor(bsz, 1).fill_(fake_label)).cuda()
+
+            loss_fake = crit_D_F(out, label)
+
+            _ = meas_acc(out, label)
+            _ = meas_D_F(out, None)
+
+            loss_fake.backward()
+
+            # update D_net
+            optimizer_D.step()
+            
+            ### train generator
+            optimizer_G.zero_grad()
+            feat_fake.retain_grad() # grad of feat_fake is quivalent to grad of feat_res
+            
+            # G loss
+            loss_g = crit_G(feat_fake, feat_real)
+            loss_g.backward()
+            optimizer_G.step()
+
+            # L2 norm
+            l2_res = (feat_fake - feat_in).norm(p = 2, dim = 1, keepdim = True)
+            l2_diff = (feat_real - feat_in).norm(p = 2, dim = 1, keepdim = True)
+            
+            ### observations
+            age_fake, _ = model._forward_age_cls(feat_fake)
+            _ = meas_age_mae(age_in, age_gt)
+            _ = meas_age_diff_real(age_real, age_in)
+            _ = meas_age_diff_fake(age_fake, age_in)
+            
+            feat_norm = feat_in.norm(p = 2, dim = 1, keepdim = True)
+            _ = meas_feat_diff_fake(l2_res, None)
+            _ = meas_feat_diff_real(l2_diff, None)
+            _ = meas_grad_norm(feat_fake.grad.norm(p = 2, dim = 1, keepdim = True), None)
+            
+            ### display
+            if batch_idx % train_opts.display_interval == 0:
+
+                loss_g = crit_G.smooth_loss(clear = True)
+                loss_d = (crit_D_R.smooth_loss(clear = True) + crit_D_F.smooth_loss(clear = True)) / 2
+                D_real = meas_D_R.smooth_loss(clear = True)
+                D_fake = meas_D_F.smooth_loss(clear = True)
+                D_acc = meas_acc.smooth_loss(clear = True)
+
+                age_mae = meas_age_mae.smooth_loss(clear = True)
+                ad_real = meas_age_diff_real.smooth_loss(clear = True)
+                ad_fake = meas_age_diff_fake.smooth_loss(clear = True)
+                fd_real = meas_feat_diff_real.smooth_loss(clear = True)
+                fd_fake = meas_feat_diff_fake.smooth_loss(clear = True)
+                grad_g = meas_grad_norm.smooth_loss(clear = True)
+
+
+                log = '[%s] [%s] Train Epoch %d [%d/%d (%.2f%%)] LR: %.3e   Loss_G: %.6f   loss_D: %.6f   loss_L2: %.6f' % \
+                    (time.ctime(), train_opts.id, epoch, batch_idx * train_loader.batch_size, len(train_loader.dataset), 100.*batch_idx / len(train_loader),
+                        lr, loss_g, loss_d, loss_l2)
+                log += '\n\tD_real: %.6f   D_fake: %.6f   D_acc: %.2f' % (D_real, D_fake, D_acc * 100.)
+                log += '\n\t Age MAE: [GT: %.2f   Real: %.2f   Fake: %.2f]' % (age_mae, ad_real, ad_fake)
+                log += '\n\t Feat Diff: [Real: %.6f   Fake: %.6f]  Feat Grad: %.6f' % (fd_real, fd_fake, grad_g)
+
+                print(log)
+                print(log, file = fout)
+                
+                info['train_history'].append({
+                    'iteration': iteration,
+                    'epoch': epoch,
+                    'Loss_G': loss_g,
+                    'loss_D': loss_d,
+                    'D_real': D_real,
+                    'D_fake': D_fake,
+                    'D_acc': D_acc,
+                    'age_mae': age_mae,
+                    'ad_real': ad_real,
+                    'ad_fake': ad_fake,
+                    'fd_real': fd_real,
+                    'fd_fake': fd_fake,
+                    'grad_g': grad_g
+                    })
+
+                if train_opts.pavi == 1:
+                    pavi_outputs = {
+                        'Loss_G': loss_g,
+                        'loss_D': loss_d,
+                        'delta': fd_fake,
+                        'D_real_upper': D_real,
+                        'D_fake_upper': D_fake_1,
+                        'D_acc_upper': D_acc,
+                    }
+                    pavi.log(phase = 'train', iter_num = iteration, outputs = pavi_outputs)
+
+        ### update epoch index
+        epoch += 1
+        
+        ### test
+        if train_opts.test_interval > 0 and epoch % train_opts.test_interval == 0:
+
+            # set test mode
+            model.eval()
+
+            # clear loss buffer
+            for lb in [crit_G, crit_D_R, crit_D_F, meas_D_R, meas_D_F， meas_acc,\
+                        meas_age_mae, meas_age_diff_real, meas_age_diff_fake,\
+                        meas_feat_diff_real, meas_feat_diff_fake, meas_grad_norm]:
+                lb.clear()
+
+            # set test iteration
+            test_iter = train_opts.test_iter if train_opts.test_iter > 0 else len(test_loader)
+
+            for batch_idx, data in enumerate(test_loader):
+
+
+                img_pair, seq_len, age_gt, _ = data
+                img_pair = Variable(img_pair).cuda()
+                age_gt = Variable(age_gt.float()).cuda()
+
+                bsz = img_pair.size(0) * 2
+
+                age_out, _, feat = model.forward_video(img_pair, seq_len)
+                feat.detach_()
+                age_out.detach_()
+
+                feat_in = torch.cat((feat[:,0,:], feat[:,1,:]))
+                feat_real = torch.cat((feat[:,1,:], feat[:,0,:]))
+                age_in = torch.cat((age_out[:,0], age_out[:,1]))
+                age_real = torch.cat((age_out[:,1], age_out[:,0]))
+                age_gt = torch.cat((age_gt, age_gt))
+
+                noise = Variable(torch.FloatTensor(bsz, model.opts.noise_dim).normal_(0, 1)).cuda()
+                feat_res = model.G_net(torch.cat((feat_in, noise), dim = 1))
+                feat_fake = F.relu(feat_in + feat_res)
+
+                # forward D real
+                if model.opts.D_mode == 'cond':
+                    out = model.D_net(torch.cat((feat_in, feat_real), dim = 1))
+                else:
+                    out = model.D_net(feat_real)
+
+                label = Variable(torch.FloatTensor(bsz, 1).fill_(real_label)).cuda()
+
+                _ = crit_D_R(out, label)
+                _ = meas_acc(out, label)
+                _ = meas_D_R(out, None)
+
+                # forward D fake
+                if model.opts.D_mode == 'cond':
+                    out = model.D_net(torch.cat((feat_in, feat_fake), dim = 1))
+                else:
+                    out = model.D_net(feat_fake)
+
+                label = Variable(torch.FloatTensor(bsz, 1).fill_(fake_label)).cuda()
+
+                _ = crit_D_F(out, label)
+                _ = meas_acc(out, label)
+                _ = meas_D_F(out, None)
+                
+                # forward G
+                _ = crit_G(feat_fake, feat_real)
+                
+                # observations
+                age_fake, _ = model._forward_age_cls(feat_fake)
+                _ = meas_age_mae(age_in, age_gt)
+                _ = meas_age_diff_real(age_real, age_in)
+                _ = meas_age_diff_fake(age_fake, age_in)
+
+                feat_norm = feat_in.norm(p = 2, dim = 1, keepdim = True)
+                _ = meas_feat_diff_fake((feat_fake - feat_in).norm(p = 2, dim = 1, keepdim = True), None)
+                _ = meas_feat_diff_real((feat_real - feat_in).norm(p = 2, dim = 1, keepdim = True), None)
+
+
+                print('\rTesting %d/%d (%.2f%%)' % (batch_idx, test_iter, 100.*batch_idx/test_iter), end = '')
+                sys.stdout.flush()
+
+                if batch_idx + 1 == test_iter:
+                    break
+            print('\n')
+
+
+            # display test result
+            loss_g = crit_G.smooth_loss(clear = True)
+            loss_d = (crit_D_R.smooth_loss(clear = True) + crit_D_F.smooth_loss(clear = True)) / 2
+            D_real = meas_D_R.smooth_loss(clear = True)
+            D_fake = meas_D_F.smooth_loss(clear = True)
+            D_acc = meas_acc.smooth_loss(clear = True)
+
+            age_mae = meas_age_mae.smooth_loss(clear = True)
+            ad_real = meas_age_diff_real.smooth_loss(clear = True)
+            ad_fake = meas_age_diff_fake.smooth_loss(clear = True)
+            fd_real = meas_feat_diff_real.smooth_loss(clear = True)
+            fd_fake = meas_feat_diff_fake.smooth_loss(clear = True)
+
+            log = '[%s] [%s] Test Epoch %d   Loss_G: %.6f   loss_D: %.6f' % \
+                (time.ctime(), train_opts.id, epoch, loss_g, loss_d)
+            log += '\n\tD_real: %.6f   D_fake: %.6f   D_acc: %.2f' % (D_real, D_fake_1, D_acc * 100.)
+            log += '\n\t Age MAE: [GT: %.2f   Real: %.2f   Fake: %.2f]' % (age_mae, ad_real, ad_fake)
+            log += '\n\t Feat Diff: [Real: %.6f   Fake: %.6f]' % (fd_real, fd_fake)
+
+
+            print(log)
+            print(log, file = fout)
+
+            iteration = epoch * len(train_loader)
+            info['test_history'].append({
+                'iteration': iteration,
+                'epoch': epoch,
+                'Loss_G': loss_g,
+                'loss_D': loss_d,
+                'D_real': D_real,
+                'D_fake': D_fake,
+                'D_acc': D_acc,
+                'age_mae': age_mae,
+                'ad_real': ad_real,
+                'ad_fake': ad_fake,
+                'fd_real': fd_real,
+                'fd_fake': fd_fake,
+                })
+
+            if train_opts.pavi == 1:
+                pavi_outputs = {
+                    'Loss_G': loss_g,
+                    'loss_D': loss_d,
+                    'delta': fd_fake,
+                    'D_real_upper': D_real,
+                    'D_fake_upper': D_fake,
+                    'D_acc_upper': D_acc,
+                }
+                pavi.log(phase = 'test', iter_num = iteration, outputs = pavi_outputs)
+
+
+        if train_opts.snapshot_interval > 0 and epoch % train_opts.snapshot_interval == 0:
+            _snapshot(epoch)
+
+    # final snapshot
+    _snapshot(epoch = 'final')
+
     
 
 def train_gan(model, train_opts):
@@ -757,7 +1054,7 @@ def train_gan(model, train_opts):
             # train with fake
             noise = Variable(torch.FloatTensor(bsz, model.opts.noise_dim).normal_(0, 1)).cuda()
             feat_res = model.G_net(torch.cat((feat_in, noise), dim = 1))
-            feat_fake = feat_in + feat_res
+            feat_fake = F.relu(feat_in + feat_res)
 
             if model.opts.D_mode == 'cond':
                 out = model.D_net(torch.cat((feat_in, feat_fake.detach()), dim = 1))
@@ -790,7 +1087,7 @@ def train_gan(model, train_opts):
             loss_g = crit_G(out, label)
 
             # L2 norm
-            l2_res = feat_res.norm(p = 2, dim = 1, keepdim = True)
+            l2_res = (feat_fake - feat_in).norm(p = 2, dim = 1, keepdim = True)
             l2_diff = (feat_real - feat_in).norm(p = 2, dim = 1, keepdim = True)
             l2_threshold = Variable(torch.FloatTensor(l2_res.size()).fill_(l2_diff.max().data[0])).cuda()
 
@@ -913,7 +1210,7 @@ def train_gan(model, train_opts):
 
                 noise = Variable(torch.FloatTensor(bsz, model.opts.noise_dim).normal_(0, 1)).cuda()
                 feat_res = model.G_net(torch.cat((feat_in, noise), dim = 1))
-                feat_fake = feat_in + feat_res
+                feat_fake = F.relu(feat_in + feat_res)
 
                 # forward real
                 if model.opts.D_mode == 'cond':
@@ -949,7 +1246,7 @@ def train_gan(model, train_opts):
                 _ = meas_age_diff_fake(age_fake, age_in)
 
                 feat_norm = feat_in.norm(p = 2, dim = 1, keepdim = True)
-                _ = meas_feat_diff_fake(feat_res.norm(p = 2, dim = 1, keepdim = True), None)
+                _ = meas_feat_diff_fake((feat_fake - feat_in).norm(p = 2, dim = 1, keepdim = True), None)
                 _ = meas_feat_diff_real((feat_real - feat_in).norm(p = 2, dim = 1, keepdim = True), None)
 
 
@@ -1064,39 +1361,49 @@ def show_feat(model, dset = None, num_sample = 20, output_dir = None):
         
         noise = Variable(torch.FloatTensor(1, model.opts.noise_dim).normal_(0,1)).cuda()
         feat_res = model.G_net(torch.cat((feat_in,noise), dim =1))
-        feat_diff = feat_real - feat_in
+        feat_diff_real = feat_real - feat_in
+        feat_diff_fake = F.relu(feat_in + feat_res) - feat_in
         
         
         ### draw
-        fig = plt.figure(figsize = (10, 12))
+        fig = plt.figure(figsize = (10, 15))
         
         # frame t1
-        ax = fig.add_subplot(4,1,1)
+        ax = fig.add_subplot(5,1,1)
         img = mpimg.imread(dset.video_lst[idx]['frames'][0]['image'])
         ax.imshow(img)
         ax.set_xlabel('org: %s' % (dset.video_lst[idx]['id']))
         
         # feat_real
-        ax = fig.add_subplot(4,1,2)
+        ax = fig.add_subplot(5,1,2)
         ax.set_ylim([-2,2])
         ax.plot(feat_in.data.cpu().numpy().flatten())
         ax.set_xlabel('feat (l2_norm: %f)' % feat_in.norm().data[0])
         
-        # feat_diff
-        ax = fig.add_subplot(4,1,3)
-        ax.set_ylim([-2, 2])
-        ax.plot(feat_diff.data.cpu().numpy().flatten())
-        ax.set_xlabel('feat_res_real: %f' % feat_diff.norm().data[0])
-        
         # feat_res
-        ax = fig.add_subplot(4,1,4)
+        ax = fig.add_subplot(5,1,3)
         ax.set_ylim([-2, 2])
         ax.plot(feat_res.data.cpu().numpy().flatten())
         ax.set_xlabel('feat_res_gen: %f' % feat_res.norm().data[0])
         
+        
+        # feat_diff_real
+        ax = fig.add_subplot(5,1,4)
+        ax.set_ylim([-2, 2])
+        ax.plot(feat_diff_real.data.cpu().numpy().flatten())
+        ax.set_xlabel('feat_res_real: %f' % feat_diff.norm().data[0])
+        
+        # feat_diff_fake
+        ax = fig.add_subplot(5,1,5)
+        ax.set_ylim([-2, 2])
+        ax.plot(feat_diff_real_fake.data.cpu().numpy().flatten())
+        ax.set_xlabel('feat_res_real: %f' % feat_diff.norm().data[0])
+        
         output_fn = os.path.join(output_dir, 'feat_%d.jpg' % idx)
         fig.savefig(output_fn)
         print('visualizing %d / %d' % (idx, num_sample))
+        
+        
         
         
         
