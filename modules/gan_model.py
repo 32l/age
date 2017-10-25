@@ -550,7 +550,7 @@ def pretrain_gan(model, train_opts):
         optimizer_D = torch.optim.SGD(model.D_net.parameters(), lr = train_opts.lr, weight_decay = train_opts.weight_decay,
             momentum = train_opts.momentum)
             
-    elif train_opts.optim == 'adam'
+    elif train_opts.optim == 'adam':
         # use Adam
         optimizer_G = torch.optim.Adam(model.G_net.parameters(), lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta), 
                 eps = train_opts.optim_epsilon)
