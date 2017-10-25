@@ -284,7 +284,7 @@ def parse_opts_pretrain_gan():
     parser.add_argument('--D_max_epochs', type = int, default = 10,
         help = 'D pretrain epochs')
     
-    parser.add_argument('--D_max_epochs', type = int, default = 5,
+    parser.add_argument('--D_lr_decay', type = int, default = 5,
         help = 'D learning rate decay')
     
     opts = parser.parse_known_args()[0]

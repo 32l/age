@@ -618,7 +618,7 @@ def pretrain_gan(model, train_opts):
             model.D_net.eval()
         
         else:
-            lr = train_opts * (train_opts.lr_decay_rate ** ((epoch - train_opts.G_max_epochs) // train_opts.D_lr_decay))
+            lr = train_opts.lr * (train_opts.lr_decay_rate ** ((epoch - train_opts.G_max_epochs) // train_opts.D_lr_decay))
             optimizer_G.param_groups[0]['lr'] = 0. # fix the parameters of G
             optimizer_D.param_groups[0]['lr'] = lr
             optimizer_G.eval()
@@ -727,9 +727,9 @@ def pretrain_gan(model, train_opts):
                 grad_g = meas_grad_norm.smooth_loss(clear = True)
 
 
-                log = '[%s] [%s] Train Epoch %d [%d/%d (%.2f%%)] LR: %.3e   Loss_G: %.6f   loss_D: %.6f   loss_L2: %.6f' % \
+                log = '[%s] [%s] Train Epoch %d [%d/%d (%.2f%%)] LR: %.3e   Loss_G: %.6f   loss_D: %.6f'% \
                     (time.ctime(), train_opts.id, epoch, batch_idx * train_loader.batch_size, len(train_loader.dataset), 100.*batch_idx / len(train_loader),
-                        lr, loss_g, loss_d, loss_l2)
+                        lr, loss_g, loss_d)
                 log += '\n\tD_real: %.6f   D_fake: %.6f   D_acc: %.2f' % (D_real, D_fake, D_acc * 100.)
                 log += '\n\t Age MAE: [GT: %.2f   Real: %.2f   Fake: %.2f]' % (age_mae, ad_real, ad_fake)
                 log += '\n\t Feat Diff: [Real: %.6f   Fake: %.6f]  Feat Grad: %.6f' % (fd_real, fd_fake, grad_g)
@@ -866,7 +866,7 @@ def pretrain_gan(model, train_opts):
 
             log = '[%s] [%s] Test Epoch %d   Loss_G: %.6f   loss_D: %.6f' % \
                 (time.ctime(), train_opts.id, epoch, loss_g, loss_d)
-            log += '\n\tD_real: %.6f   D_fake: %.6f   D_acc: %.2f' % (D_real, D_fake_1, D_acc * 100.)
+            log += '\n\tD_real: %.6f   D_fake: %.6f   D_acc: %.2f' % (D_real, D_fake, D_acc * 100.)
             log += '\n\t Age MAE: [GT: %.2f   Real: %.2f   Fake: %.2f]' % (age_mae, ad_real, ad_fake)
             log += '\n\t Feat Diff: [Real: %.6f   Fake: %.6f]' % (fd_real, fd_fake)
 
@@ -1434,6 +1434,23 @@ if __name__ == '__main__':
         model.load_model(fn, modules = ['cnn'])
 
         pretrain(model, train_opts)
+
+    elif command == 'pretrain_gan':
+        
+        model_opts = opt_parser.parse_opts_gan_model()
+        train_opts = opt_parser.parse_opts_pretrain_gan()
+        
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in train_opts.gpu_id])
+        if not train_opts.pre_id.endswith('.pth'):
+            fn = os.path.join('models', train_opts.pre_id, 'best.pth')
+        else:
+            fn = train_opts.pred_id
+        
+        model = GANModel(opts = model_opts)
+        model.load_model(fn, modules = ['cnn', 'age_cls'])
+
+        pretrain_gan(model, train_opts)
+
 
     elif command == 'train_gan':
 
