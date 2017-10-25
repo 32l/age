@@ -189,7 +189,7 @@ class GANModel(nn.Module):
 
     def _forward_age_cls(self, feat):
 
-        fc_out = self.age_cls(F.relu(feat))
+        fc_out = self.age_cls(feat)
 
         if self.opts.cls_type == 'dex':
             # Deep EXpectation
@@ -221,6 +221,7 @@ class GANModel(nn.Module):
         Output:
             age_out: (bsz, 1). Predicted age.
             fc_out: (bsz, fc_age). Output of the last fc-layer
+            feat: (bsz, feat_size)
 
         '''
 
@@ -240,7 +241,7 @@ class GANModel(nn.Module):
         Output:
             age_out: (bsz, max_len). Predicted age
             fc_out:  (bsz, max_len, fc_size)
-
+            feat: (bsz, max_len, feat_size)
         '''
 
         bsz, max_len = img_seq.size()[0:2]
@@ -254,6 +255,55 @@ class GANModel(nn.Module):
         feat = feat.view(bsz, max_len, -1)
 
         return age_out, fc_out, feat
+        
+    def forward_video_with_feat_aug(self, img_seq, seq_len, opts):
+        '''
+        Forward video clips with feature augmentation for each frame. Assume that all
+        frames are valid
+        Input: 
+            img_seq: (bsz, max_len, 3, 224, 224). Video data mini-batch
+            seq_len: (bsz,). Length of each video clip.
+            opts: (namespace) training options, which contains augmentation options
+        Output:
+            age_out: (bsz, expanded_len). Predicted age
+            fc_out:  (bsz, expanded_len, fc_size)
+
+        '''
+        
+        ### aug otps
+        aug_mode = opts.aug_mode
+        aug_rate = opts.aug_rate
+        aug_scale = opts.aug_scale
+        
+        age_out, fc_out, feat = self.forward_video(img_seq, seq_len)
+        bsz, org_len, feat_sz = feat.size()
+        
+        feat_exp = feat.view(bsz*org_len, feat_sz).unsqueeze(dim = 1).expand(aug_rate).contiguous().view(bsz*org_len*aug_rate, feat_sz)
+        
+        
+        if aug_mode == 'gan':
+            # use G_net to generate feature residual
+            noise = Variable(torch.FloatTensor(feat_exp.size(0), model.opts.noise_dim).normal_(0, 1)).cuda()
+            feat_res = self.G_net(torch.cat((feat_exp, noise), dim = 1))
+            
+        elif aug_mode == 'gaussian':
+            # add gaussian noise to original feature
+            feat_res = Variable(torch.FloatTensor(feat_exp.size()).normal_(0, aug_scale).cuda())
+        
+        feat_exp = F.relu(feat_exp + feat_res)
+        age_exp, fc_exp = self._forward_age_cls(feat_exp)
+        
+        age_exp = age_exp.view(bsz, org_len*aug_rate)
+        fc_exp = fc_exp.view(bsz, org_len*aug_rate, -1)
+        feat_exp = feat.view(bsz, org_len*aug_rate, -1)
+        
+        age_out = torch.cat((age_out, age_exp), dim = 1)
+        fc_out = torch.cat((fc_out, fc_exp), dim = 1)
+        feat = torch.cat((feat, feat_exp), dim = 1)
+        
+        return age_out, fc_out, feat
+        
+        
 
 
 
@@ -1323,6 +1373,264 @@ def train_gan(model, train_opts):
     _snapshot(epoch = 'final')
 
 
+
+def finetune_fix_cnn(model, train_opts):
+
+    if not train_opts.id.startswith('gan_'):
+        train_opts.id = 'gan_' + train_opts.id
+
+    opts_str = opts_str = opt_parser.opts_to_string([('model_opts', model.opts), ('train_opts', train_opts)])
+    print(opts_str)
+
+    ### move model to GPU
+    if torch.cuda.device_count() > 1:
+        model.cnn = nn.DataParallel(model.cnn)
+    model.cuda()
+
+
+    ### load dataset
+    train_dset = dataset.load_video_age_dataset(version = train_opts.dataset_version, subset = 'train',
+        crop_size = train_opts.crop_size, age_rng = [model.opts.min_age, model.opts.max_age],
+        split = train_opts.train_split, max_len = train_opts.video_max_len)
+    test_dset = dataset.load_video_age_dataset(version = train_opts.dataset_version, subset = 'test',
+        crop_size = train_opts.crop_size, age_rng = [model.opts.min_age, model.opts.max_age])
+
+    train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
+        num_workers = 4, pin_memory = True)
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 128, 
+        num_workers = 4, pin_memory = True)
+
+
+    ### create optimizer
+    if train_opts.optim == 'sgd':
+        optimizer = torch.optim.SGD(model.age_cls.parameters(), 
+            lr = train_opts.lr, weight_decay = train_opts.weight_decay, momentum = train_opts.momentum)
+
+    elif train_opts.optim == 'adam':
+        optimizer = torch.optim.Adam(model.age_cls.parameters(), 
+            lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta), 
+            eps = train_opts.optim_epsilon, weight_decay = train_opts.weight_decay)
+
+    ### loss function
+    if model.opts.cls_type == 'dex':
+        crit_age = nn.CrossEntropyLoss(ignore_index = -1)
+    elif model.opts.cls_type == 'oh':
+        crit_age = misc.Ordinal_Hyperplane_Loss(relaxation = model.opts.oh_relaxation, ignore_index = -1)
+    elif model.opts.cls_type == 'reg':
+        crit_age = nn.MSELoss()
+
+    crit_age = misc.Smooth_Loss(misc.Video_Loss(crit_age))
+    meas_age = misc.Video_Age_Analysis()
+
+
+    ### output information
+    # json_log
+    output_dir = os.path.join('models', train_opts.id)
+    io.mkdir_if_missing(output_dir)
+    fn_info = os.path.join(output_dir, 'info.json')
+
+    info = {
+        'opts': vars(model.opts),
+        'train_opts': vars(train_opts),
+        'train_history': [],
+        'test_history': [],
+    }
+
+    def _snapshot(epoch):
+        print('saving checkpoint to %s\t' % output_dir)
+        model.save_model(os.path.join(output_dir, '%s.pth' % epoch))
+        io.save_json(info, fn_info)
+
+    # text_log
+    fout = open(os.path.join(output_dir, 'log.txt'), 'w')
+    print(opts_str, file = fout)
+
+    # pavi_log
+    if train_opts.pavi == 1:
+        pavi = PaviClient(username = 'ly015', password = '123456')
+        pavi.connect(model_name = train_opts.id, info = {'session_text': opts_str})
+
+
+    # save checkpoint if getting a best performance
+    checkbest_name = 'mae'
+    checkbest_value = sys.float_info.max
+    checkbest_epoch = -1
+
+
+    ### main training loop
+    epoch = 0
+    model.eval()
+    
+    while epoch < train_opts.max_epochs:
+
+        # set model mode
+        model.G_net.train()
+        model.D_net.train()
+
+        # update learning rate
+        lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay))
+        for pg in optimizer.param_groups:
+            pg['lr'] = lr
+
+        # train one epoch
+        for batch_idx, data in enumerate(train_loader):
+
+            optimizer.zero_grad()
+
+            img_seq, seq_len, age_gt, age_std = data
+            img_seq = Variable(img_seq).cuda()
+            seq_len = Variable(seq_len).cuda()
+            age_gt = Variable(age_gt.float()).cuda()
+            age_std = age_std.float()
+
+            age_label = age_gt.round().long() - model.opts.min_age
+            
+            
+            # forward and backward
+            age_out, fc_out, _ = model.forward_video(img_seq, seq_len)
+
+            loss = crit_age(fc_out, age_label, seq_len)
+            meas_age.add(age_out, age_gt, seq_len, age_std)
+
+            loss.backward()
+
+            # optimize
+            optimizer.step()
+
+            # display
+            if batch_idx % train_opts.display_interval == 0:
+                loss_smooth = crit_age.smooth_loss()
+                mae_smooth = meas_age.mae()
+
+                crit_age.clear()
+                meas_age.clear()
+
+                log = '[%s] [%s] Train Epoch %d [%d/%d (%.2f%%)]   LR: %.3e   Loss: %.6f   Mae: %.2f' %\
+                        (time.ctime(), train_opts.id, epoch, batch_idx * train_loader.batch_size,
+                        len(train_loader.dataset), 100. * batch_idx / len(train_loader),
+                        lr, loss_smooth, mae_smooth)
+
+                print(log) # to screen
+                print(log, file = fout) # to log file
+
+                iteration = batch_idx + epoch * len(train_loader)
+                info['train_history'].append({
+                    'iteration': iteration,
+                    'epoch': epoch, 
+                    'loss': loss_smooth, 
+                    'mae': mae_smooth})
+
+                if train_opts.pavi == 1:
+                    pavi_outputs = {
+                        'loss_age': loss_smooth,
+                        'mae_age_upper': mae_smooth
+                    }
+                    pavi.log(phase = 'train', iter_num = iteration, outputs = pavi_outputs)
+
+        # update epoch index
+        epoch += 1
+
+
+        # test
+        if train_opts.test_interval > 0 and epoch % train_opts.test_interval == 0:
+
+            # set test model
+            model.eval()
+
+            # clear buffer
+            crit_age.clear()
+            meas_age.clear()
+
+            # set test iteration
+            test_iter = train_opts.test_iter if train_opts.test_iter > 0 else len(test_loader)    
+
+            
+            for batch_idx, data in enumerate(test_loader):
+
+                img_seq, seq_len, age_gt, age_std = data
+                img_seq = Variable(img_seq).cuda()
+                seq_len = Variable(seq_len).cuda()
+                age_gt = Variable(age_gt.float()).cuda()
+                age_std = age_std.float()
+
+                age_label = age_gt.round().long() - model.opts.min_age
+
+                # forward
+                age_out, fc_out, _ = model.forward_video(img_seq, seq_len)
+
+                loss = crit_age(fc_out, age_label, seq_len)
+                meas_age.add(age_out, age_gt, seq_len, age_std)
+
+                print('\rTesting %d/%d (%.2f%%)' % (batch_idx, test_iter, 100.*batch_idx/test_iter), end = '')
+                sys.stdout.flush()
+
+                if batch_idx + 1 == test_iter:
+                    break
+            print('')
+
+            # display
+            loss = crit_age.smooth_loss()
+            mae = meas_age.mae()
+            ca3 = meas_age.ca(3)
+            ca5 = meas_age.ca(5)
+            ca10 = meas_age.ca(10)
+            lap_err = meas_age.lap_err()
+            der = meas_age.stable_der()
+            rng = meas_age.stable_range()
+
+            crit_age.clear()
+            meas_age.clear()
+
+            log = '[%s] [%s] Test Epoch %d   Loss: %.6f   Mae: %.2f\n\tCA(3): %.2f   CA(5): %.2f   CA(10): %.2f   LAP: %.4f\n\tDer: %f   Range: %f' % \
+                    (time.ctime(), train_opts.id, epoch, loss, mae, ca3, ca5, ca10, lap_err, der, rng)
+
+            print(log)
+            print(log, file = fout)
+
+            iteration = epoch * len(train_loader)
+
+            info['test_history'].append({
+                    'iteration': iteration,
+                    'epoch': epoch, 
+                    'loss': loss, 
+                    'mae': mae,
+                    'ca3': ca3,
+                    'ca5': ca5,
+                    'ca10': ca10,
+                    'lap_err': lap_err,
+                    'der': der,
+                    'range': rng
+                    })
+
+            if train_opts.pavi == 1:
+                pavi_outputs = {
+                    'loss_age': loss,
+                    'mae_age_upper': mae,
+                    'der_age_upper': der
+                }
+                pavi.log(phase = 'test', iter_num = iteration, outputs = pavi_outputs)
+
+            # snapshot best
+            if info['test_history'][-1][checkbest_name] < checkbest_value:
+                checkbest_value = info['test_history'][-1][checkbest_name]
+                checkbest_epoch = epoch
+                _snapshot('best')
+
+        # snapshot
+        if train_opts.snapshot_interval > 0 and epoch % train_opts.snapshot_interval == 0:
+            _snapshot(epoch)
+
+    # final snapshot
+    _snapshot(epoch = 'final')
+
+    log = 'best performance: epoch %d' % checkbest_epoch
+    print(log)
+    print(log, file = fout)
+    fout.close()
+
+
+    
+    
 def show_feat(model, dset = None, num_sample = 20, output_dir = None):
     '''
     visualize feature generated by model.G_net
@@ -1411,13 +1719,6 @@ def show_feat(model, dset = None, num_sample = 20, output_dir = None):
         print('visualizing %d / %d' % (idx, num_sample))
         
         
-        
-        
-        
-        
-        
-        
-    
     
 
 if __name__ == '__main__':
@@ -1479,6 +1780,25 @@ if __name__ == '__main__':
             model.load_model(fn)
 
         train_gan(model, train_opts)
+        
+    
+    elif command == 'finetune_fix':
+        
+        model_opts = opt_parser.parse_opts_gan_model()
+        train_opts = opt_parser.parse_opts_finetune_fix_cnn()
+        
+        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in train_opts.gpu_id])
+        
+        # load pretrained model
+        if not train_opts.pre_id.endswith('.pth'):
+            fn = os.path.join('models', train_opts.pre_id, 'best.pth')
+        else:
+            fn = train_opts.pre_id
+        
+        model = GANModel(opts = model_opts)
+        model.load_model(fn)
+        
+        finetune_fix_cnn(model, train_opts)
     
     elif command == 'retrain':
         
@@ -1524,6 +1844,9 @@ if __name__ == '__main__':
             else:
                 model.load_model(fn, modules = ['cnn', 'age_cls'])
             train_gan(model, train_opts)
+        elif retrain_opts.mode == 'finetune_fix':
+            model.load_model(fn)
+            finetune_fix_cnn(model, train_opts)
     
     
     elif command == 'show_feat':

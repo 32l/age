@@ -33,7 +33,8 @@ def parse_command():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('command', type = str, default = 'help',
-        choices = ['pretrain', 'train_gan', 'pretrain_gan', 'retrain', 'show_feat'])
+        choices = ['pretrain', 'train_gan', 'pretrain_gan', 'finetune_fix',
+        'retrain', 'show_feat'])
 
     command = parser.parse_known_args()[0].command
 
@@ -121,7 +122,7 @@ def parse_opts_retrain():
         help = 'ID of model to retrain')
     
     parser.add_argument('--mode', type = str, default = 'train_gan',
-        choices = ['pretrain', 'pretrain_gan', 'train_gan'],
+        choices = ['pretrain', 'pretrain_gan', 'train_gan', 'finetune_fix'],
         help = 'training mode ')
 
     opts = parser.parse_known_args()[0]
@@ -286,6 +287,28 @@ def parse_opts_pretrain_gan():
     
     parser.add_argument('--D_lr_decay', type = int, default = 5,
         help = 'D learning rate decay')
+    
+    opts = parser.parse_known_args()[0]
+    
+    return opts
+
+def parse_opts_finetune_fix_cnn():
+    
+    parser = argparse.ArgumentParser(parents = [basic_train_opts_parser()])
+    
+    parser.add_argument('--pre_id', type = str, default = 'gan_pre_1.4',
+        help = 'ID of pretrained model (both CNN and GAN should be trained)')
+    
+    parser.add_argument('--aug_mode', type = str, default = 'gan',
+        choices = ['gan', 'gaussian'],
+        help = 'augmentation method')
+    
+    parser.add_argument('--aug_scale', type = float, default = 1.,
+        help = 'augmentation scale. for guassian noise, it is the std')
+    
+    parser.add_argument('--aug_rate', type = int, default = 5,
+        help = 'number of augmented samples for each real sample')
+    
     
     opts = parser.parse_known_args()[0]
     
