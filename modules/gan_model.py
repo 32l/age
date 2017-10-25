@@ -550,7 +550,7 @@ def pretrain_gan(model, train_opts):
         optimizer_D = torch.optim.SGD(model.D_net.parameters(), lr = train_opts.lr, weight_decay = train_opts.weight_decay,
             momentum = train_opts.momentum)
             
-    elif train_opts.optim == 'adam'
+    elif train_opts.optim == 'adam':
         # use Adam
         optimizer_G = torch.optim.Adam(model.G_net.parameters(), lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta), 
                 eps = train_opts.optim_epsilon)
@@ -629,8 +629,8 @@ def pretrain_gan(model, train_opts):
             lr = train_opts.lr * (train_opts.lr_decay_rate ** ((epoch - train_opts.G_max_epochs) // train_opts.D_lr_decay))
             optimizer_G.param_groups[0]['lr'] = 0. # fix the parameters of G
             optimizer_D.param_groups[0]['lr'] = lr
-            optimizer_G.eval()
-            optimizer_D.train()
+            model.G_net.eval()
+            model.D_net.train()
         
         # train one epoch
         for batch_idx, data in enumerate(train_loader):
@@ -766,7 +766,7 @@ def pretrain_gan(model, train_opts):
                         'loss_D': loss_d,
                         'delta': fd_fake,
                         'D_real_upper': D_real,
-                        'D_fake_upper': D_fake_1,
+                        'D_fake_upper': D_fake,
                         'D_acc_upper': D_acc,
                     }
                     pavi.log(phase = 'train', iter_num = iteration, outputs = pavi_outputs)
@@ -1398,13 +1398,13 @@ def show_feat(model, dset = None, num_sample = 20, output_dir = None):
         ax = fig.add_subplot(5,1,4)
         ax.set_ylim([-2, 2])
         ax.plot(feat_diff_real.data.cpu().numpy().flatten())
-        ax.set_xlabel('feat_res_real: %f' % feat_diff.norm().data[0])
+        ax.set_xlabel('feat_res_real: %f' % feat_diff_real.norm().data[0])
         
         # feat_diff_fake
         ax = fig.add_subplot(5,1,5)
         ax.set_ylim([-2, 2])
-        ax.plot(feat_diff_real_fake.data.cpu().numpy().flatten())
-        ax.set_xlabel('feat_res_real: %f' % feat_diff.norm().data[0])
+        ax.plot(feat_diff_fake.data.cpu().numpy().flatten())
+        ax.set_xlabel('feat_res_fake: %f' % feat_diff_fake.norm().data[0])
         
         output_fn = os.path.join(output_dir, 'feat_%d.jpg' % idx)
         fig.savefig(output_fn)
