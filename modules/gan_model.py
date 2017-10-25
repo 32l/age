@@ -633,17 +633,16 @@ def pretrain_gan(model, train_opts):
             img_pair = Variable(img_pair).cuda()
             age_gt = Variable(age_gt.float()).cuda()
 
-            bsz = img_pair.size(0) * 2
+            bsz = img_pair.size(0)
 
             age_out, _, feat = model.forward_video(img_pair, seq_len)
             feat.detach_()
             age_out.detach_()
-
-            feat_in = torch.cat((feat[:,0,:], feat[:,1,:]))
-            feat_real = torch.cat((feat[:,1,:], feat[:,0,:]))
-            age_in = torch.cat((age_out[:,0], age_out[:,1]))
-            age_real = torch.cat((age_out[:,1], age_out[:,0]))
-            age_gt = torch.cat((age_gt, age_gt))
+            
+            feat_in = feat[:,0,:]
+            feat_real = feat[:,1,:]
+            age_in = age_out[:,0]
+            age_real = age_out[:,1]
 
             #### train D_net
             # keep doing this part while pretraining G
