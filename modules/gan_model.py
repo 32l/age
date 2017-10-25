@@ -543,12 +543,20 @@ def pretrain_gan(model, train_opts):
         num_workers = 4, pin_memory = True)
 
     ### create optimizer
-    # use Adam
-    optimizer_G = torch.optim.Adam(model.G_net.parameters(), lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta), 
-            eps = train_opts.optim_epsilon)
+    if train_opts.optim == 'sgd':
+        # use SGD
+        optimizer_G = torch.optim.SGD(model.G_net.parameters(), lr = train_opts.lr, weight_decay = train_opts.weight_decay,
+            momentum = train_opts.momentum)
+        optimizer_D = torch.optim.SGD(model.D_net.parameters(), lr = train_opts.lr, weight_decay = train_opts.weight_decay,
+            momentum = train_opts.momentum)
+            
+    elif train_opts.optim == 'adam'
+        # use Adam
+        optimizer_G = torch.optim.Adam(model.G_net.parameters(), lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta), 
+                eps = train_opts.optim_epsilon)
 
-    optimizer_D = torch.optim.Adam(model.D_net.parameters(), lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta),
-            eps = train_opts.optim_epsilon)
+        optimizer_D = torch.optim.Adam(model.D_net.parameters(), lr = train_opts.lr, betas = (train_opts.optim_alpha, train_opts.optim_beta),
+                eps = train_opts.optim_epsilon)
     
     ### loss function
     crit_G = misc.Smooth_Loss(nn.L1Loss()) # G Loss
@@ -644,8 +652,7 @@ def pretrain_gan(model, train_opts):
             age_in = age_out[:,0]
             age_real = age_out[:,1]
 
-            #### train D_net
-            # keep doing this part while pretraining G
+            #### train D_net            
             optimizer_D.zero_grad()
 
             # train with real
@@ -667,7 +674,8 @@ def pretrain_gan(model, train_opts):
             noise = Variable(torch.FloatTensor(bsz, model.opts.noise_dim).normal_(0, 1)).cuda()
             feat_res = model.G_net(torch.cat((feat_in, noise), dim = 1))
             feat_fake = F.relu(feat_in + feat_res)
-
+            
+            # detach the feat_fake, so that the grad of loss_d will not back propagate to G_net
             if model.opts.D_mode == 'cond':
                 out = model.D_net(torch.cat((feat_in, feat_fake.detach()), dim = 1))
             else:
@@ -685,7 +693,7 @@ def pretrain_gan(model, train_opts):
             # update D_net
             optimizer_D.step()
             
-            ### train generator
+            ### train G_net
             optimizer_G.zero_grad()
             feat_fake.retain_grad() # grad of feat_fake is quivalent to grad of feat_res
             
