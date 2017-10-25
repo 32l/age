@@ -1397,7 +1397,7 @@ def finetune_fix_cnn(model, train_opts):
 
     train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
         num_workers = 4, pin_memory = True)
-    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 128, 
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 32, 
         num_workers = 4, pin_memory = True)
 
 
@@ -1487,7 +1487,12 @@ def finetune_fix_cnn(model, train_opts):
             
             
             # forward and backward
-            age_out, fc_out, _ = model.forward_video(img_seq, seq_len)
+            # age_out, fc_out, _ = model.forward_video(img_seq, seq_len)
+            age_out, fc_out, _ = model.forward_video_with_feat_aug(img_seq, seq_len, train_opts)
+            
+            
+            seq_len.data.fill_(age_out.size(1))
+            
 
             loss = crit_age(fc_out, age_label, seq_len)
             meas_age.add(age_out, age_gt, seq_len, age_std)
@@ -1678,8 +1683,7 @@ def show_feat(model, dset = None, num_sample = 20, output_dir = None):
         feat_res = model.G_net(torch.cat((feat_in,noise), dim =1))
         feat_diff_real = feat_real - feat_in
         feat_diff_fake = F.relu(feat_in + feat_res) - feat_in
-        
-        
+                
         ### draw
         fig = plt.figure(figsize = (10, 15))
         
