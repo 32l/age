@@ -1504,6 +1504,7 @@ def finetune_fix_cnn(model, train_opts):
             optimizer.step()
             p1 = model.age_cls.fc0.weight.clone()
             print('w_diff: %f' % (p0-p1).norm().data[0])
+            print('w: %f' % p1.norm().data[0])
 
             # display
             if batch_idx % train_opts.display_interval == 0:
