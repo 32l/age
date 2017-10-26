@@ -200,7 +200,7 @@ def basic_train_opts_parser():
     parser.add_argument('--momentum', type = float, default = 0.9,
         help = 'momentum for SGD')
 
-    parser.add_argument('--optim_alpha', type = float, default = 0.5,
+    parser.add_argument('--optim_alpha', type = float, default = 0.9,
         help = 'alpha for adam')
 
     parser.add_argument('--optim_beta', type = float, default = 0.999,

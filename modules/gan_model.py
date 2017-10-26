@@ -1496,9 +1496,14 @@ def finetune_fix_cnn(model, train_opts):
             meas_age.add(age_out, age_gt, seq_len, age_std)
 
             loss.backward()
-
+            
+            print('grad norm: %f' % model.age_cls.fc0.weight.grad.norm().data[0])
+            p0 = model.age_cls.fc0.weight.clone()
+            
             # optimize
             optimizer.step()
+            p1 = model.age_cls.fc0.weight.clone()
+            print('w_diff: %f' % (p0-p1).norm().data[0])
 
             # display
             if batch_idx % train_opts.display_interval == 0:
