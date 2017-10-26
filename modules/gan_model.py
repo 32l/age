@@ -278,7 +278,7 @@ class GANModel(nn.Module):
         age_out, fc_out, feat = self.forward_video(img_seq, seq_len)
         bsz, org_len, feat_sz = feat.size()
         
-        feat_exp = feat.view(bsz*org_len, feat_sz).unsqueeze(dim = 1).expand(aug_rate).contiguous().view(bsz*org_len*aug_rate, feat_sz)
+        feat_exp = feat.view(bsz*org_len, feat_sz).unsqueeze(dim = 1).expand(bsz*org_len, aug_rate, feat_sz).contiguous().view(bsz*org_len*aug_rate, feat_sz)
         
         
         if aug_mode == 'gan':
@@ -295,7 +295,7 @@ class GANModel(nn.Module):
         
         age_exp = age_exp.view(bsz, org_len*aug_rate)
         fc_exp = fc_exp.view(bsz, org_len*aug_rate, -1)
-        feat_exp = feat.view(bsz, org_len*aug_rate, -1)
+        feat_exp = feat_exp.view(bsz, org_len*aug_rate, -1)
         
         age_out = torch.cat((age_out, age_exp), dim = 1)
         fc_out = torch.cat((fc_out, fc_exp), dim = 1)
@@ -401,8 +401,7 @@ def pretrain(model, train_opts):
     while epoch < train_opts.max_epochs:
 
         # set model mode
-        model.G_net.train()
-        model.D_net.train()
+        model.train()
 
         # update learning rate
         lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay))
@@ -1397,7 +1396,7 @@ def finetune_fix_cnn(model, train_opts):
 
     train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
         num_workers = 4, pin_memory = True)
-    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 32, 
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 16, 
         num_workers = 4, pin_memory = True)
 
 
@@ -1464,8 +1463,7 @@ def finetune_fix_cnn(model, train_opts):
     while epoch < train_opts.max_epochs:
 
         # set model mode
-        model.G_net.train()
-        model.D_net.train()
+        model.age_cls.train()
 
         # update learning rate
         lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.lr_decay))
@@ -1788,7 +1786,6 @@ if __name__ == '__main__':
     
     elif command == 'finetune_fix':
         
-        model_opts = opt_parser.parse_opts_gan_model()
         train_opts = opt_parser.parse_opts_finetune_fix_cnn()
         
         os.environ['CUDA_VISIBLE_DEVICES'] = ','.join([str(i) for i in train_opts.gpu_id])
@@ -1799,8 +1796,7 @@ if __name__ == '__main__':
         else:
             fn = train_opts.pre_id
         
-        model = GANModel(opts = model_opts)
-        model.load_model(fn)
+        model = GANModel(fn = fn)
         
         finetune_fix_cnn(model, train_opts)
     

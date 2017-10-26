@@ -176,7 +176,7 @@ def basic_train_opts_parser():
 
 
     # optimization
-    parser.add_argument('--max_epochs', type = int, default = 30,
+    parser.add_argument('--max_epochs', type = int, default = 15,
         help = 'number of training epochs')
 
     parser.add_argument('--batch_size', type = int, default = 32,
@@ -188,7 +188,7 @@ def basic_train_opts_parser():
     parser.add_argument('--lr', type = float, default = 1e-4,
         help = 'learning rate')
 
-    parser.add_argument('--lr_decay', type = int, default = 20,
+    parser.add_argument('--lr_decay', type = int, default = 5,
         help = 'every how many epochs does the learning rate decay')
 
     parser.add_argument('--lr_decay_rate', type = float, default = 0.1,
@@ -296,7 +296,7 @@ def parse_opts_finetune_fix_cnn():
     
     parser = argparse.ArgumentParser(parents = [basic_train_opts_parser()])
     
-    parser.add_argument('--pre_id', type = str, default = 'gan_pre_1.4',
+    parser.add_argument('--pre_id', type = str, default = 'models/gan_5.1/final.pth',
         help = 'ID of pretrained model (both CNN and GAN should be trained)')
     
     parser.add_argument('--aug_mode', type = str, default = 'gan',
