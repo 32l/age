@@ -274,6 +274,7 @@ class GANModel(nn.Module):
         aug_mode = opts.aug_mode
         aug_rate = opts.aug_rate
         aug_scale = opts.aug_scale
+        aug_pure = opts.aug_pure
         
         age_out, fc_out, feat = self.forward_video(img_seq, seq_len)
         bsz, org_len, feat_sz = feat.size()
@@ -297,9 +298,14 @@ class GANModel(nn.Module):
         fc_exp = fc_exp.view(bsz, org_len*aug_rate, -1)
         feat_exp = feat_exp.view(bsz, org_len*aug_rate, -1)
         
-        age_out = torch.cat((age_out, age_exp), dim = 1)
-        fc_out = torch.cat((fc_out, fc_exp), dim = 1)
-        feat = torch.cat((feat, feat_exp), dim = 1)
+        if aug_pure == 0:
+            age_out = torch.cat((age_out, age_exp), dim = 1)
+            fc_out = torch.cat((fc_out, fc_exp), dim = 1)
+            feat = torch.cat((feat, feat_exp), dim = 1)
+        else:
+            age_out = age_exp
+            fc_out = fc_exp
+            feat = feat_exp
         
         return age_out, fc_out, feat
         
