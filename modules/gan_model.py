@@ -1497,6 +1497,7 @@ def finetune_fix_cnn(model, train_opts):
 
             loss.backward()
             
+            print('len: %d'%age_out.size(1))
             print('grad norm: %f' % model.age_cls.fc0.weight.grad.norm().data[0])
             p0 = model.age_cls.fc0.weight.clone()
             
