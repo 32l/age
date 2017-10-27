@@ -396,7 +396,6 @@ def pretrain(model, train_opts):
 
     ### main training loop
     epoch = 0
-    model.eval()
     
     while epoch < train_opts.max_epochs:
 
@@ -411,7 +410,7 @@ def pretrain(model, train_opts):
         # train one epoch
         for batch_idx, data in enumerate(train_loader):
 
-            optimizer.zero_grad()
+            model.zero_grad()
 
             img_seq, seq_len, age_gt, age_std = data
             img_seq = Variable(img_seq).cuda()
@@ -665,7 +664,6 @@ def pretrain_gan(model, train_opts):
     while epoch < train_opts.G_max_epochs + train_opts.D_max_epochs:
         
         # set model mode
-                
         # update learning rate
         if epoch < train_opts.G_max_epochs:
             lr = train_opts.lr * (train_opts.lr_decay_rate ** (epoch // train_opts.G_lr_decay))
@@ -684,7 +682,8 @@ def pretrain_gan(model, train_opts):
         # train one epoch
         for batch_idx, data in enumerate(train_loader):
             iteration = batch_idx + epoch*len(train_loader)
-
+            
+            model.zero_grad()
             ### extract feature
             img_pair, seq_len, age_gt, _ = data
             img_pair = Variable(img_pair).cuda()
@@ -701,8 +700,7 @@ def pretrain_gan(model, train_opts):
             age_in = age_out[:,0]
             age_real = age_out[:,1]
 
-            #### train D_net            
-            optimizer_D.zero_grad()
+            #### train D_net
 
             # train with real
             if model.opts.D_mode == 'cond':
@@ -1071,7 +1069,8 @@ def train_gan(model, train_opts):
         # train one epoch
         for batch_idx, data in enumerate(train_loader):
             iteration = batch_idx + epoch*len(train_loader)
-
+            model.zero_grad()
+            
             ### extract feature
             img_pair, seq_len, age_gt, _ = data
             img_pair = Variable(img_pair).cuda()
@@ -1090,7 +1089,6 @@ def train_gan(model, train_opts):
             age_gt = torch.cat((age_gt, age_gt))
 
             #### train D_net
-            optimizer_D.zero_grad()
 
             # train with real
             if model.opts.D_mode == 'cond':
@@ -1472,8 +1470,8 @@ def finetune_fix_cnn(model, train_opts):
 
         # train one epoch
         for batch_idx, data in enumerate(train_loader):
-
-            optimizer.zero_grad()
+            iteration = batch_idx + epoch * len(train_loader)
+            model.zero_grad()
 
             img_seq, seq_len, age_gt, age_std = data
             img_seq = Variable(img_seq).cuda()
@@ -1497,8 +1495,7 @@ def finetune_fix_cnn(model, train_opts):
 
             loss.backward()
             
-            print('len: %d'%age_out.size(1))
-            print('grad norm: %f' % model.age_cls.fc0.weight.grad.norm().data[0])
+            grad = model.age_cls.fc0.weight.grad.norm().data[0]
             p0 = model.age_cls.fc0.weight.clone()
             
             # optimize
@@ -1523,7 +1520,7 @@ def finetune_fix_cnn(model, train_opts):
                 print(log) # to screen
                 print(log, file = fout) # to log file
 
-                iteration = batch_idx + epoch * len(train_loader)
+                
                 info['train_history'].append({
                     'iteration': iteration,
                     'epoch': epoch, 
