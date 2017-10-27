@@ -1484,7 +1484,7 @@ def finetune_fix_cnn(model, train_opts):
             
             # forward and backward
             # age_out, fc_out, _ = model.forward_video(img_seq, seq_len)
-            age_out, fc_out, _ = model.forward_video_with_feat_aug(img_seq, seq_len, train_opts)
+            age_out, fc_out, feat = model.forward_video_with_feat_aug(img_seq, seq_len, train_opts)
             
             
             seq_len.data.fill_(age_out.size(1))
@@ -1495,7 +1495,7 @@ def finetune_fix_cnn(model, train_opts):
 
             loss.backward()
             
-            grad = model.age_cls.fc0.weight.grad.norm().data[0]
+            grad = model.age_cls.fc0.weight.grad
             p0 = model.age_cls.fc0.weight.clone()
             
             # optimize
@@ -1503,9 +1503,8 @@ def finetune_fix_cnn(model, train_opts):
             
             p1 = model.age_cls.fc0.weight.clone()
             pd = p1 - p0
-            print('w_norm: %.6f   w_diff: %.6f   grad_norm: %.6f' %
-                (p0.norm().data[0], pd.norm().data[0], grad.norm().data[0]))
-            
+#print('w_norm: %.6f   w_diff: %.6f   grad_norm: %.6f' %
+#                (p0.norm().data[0], pd.norm().data[0], grad.norm().data[0]))
 
             # display
             if batch_idx % train_opts.display_interval == 0:
@@ -1803,6 +1802,8 @@ if __name__ == '__main__':
             fn = train_opts.pre_id
         
         model = GANModel(fn = fn)
+        if train_opts.load_age_cls == 0:
+            model.age_cls.apply(weights_init)
         
         finetune_fix_cnn(model, train_opts)
     

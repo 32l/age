@@ -309,7 +309,9 @@ def parse_opts_finetune_fix_cnn():
     parser.add_argument('--aug_rate', type = int, default = 5,
         help = 'number of augmented samples for each real sample')
     
-    
+    parser.add_argument('--load_age_cls', type = int, default = 1,
+        help = 'load age_cls from pretrained model or retrain it')
+
     opts = parser.parse_known_args()[0]
     
     return opts
