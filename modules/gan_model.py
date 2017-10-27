@@ -315,8 +315,8 @@ class GANModel(nn.Module):
         
 def pretrain(model, train_opts):
 
-    if not train_opts.id.startswith('gan_'):
-        train_opts.id = 'gan_' + train_opts.id
+    if not train_opts.id.startswith('gan2_'):
+        train_opts.id = 'gan2_' + train_opts.id
 
     opts_str = opts_str = opt_parser.opts_to_string([('model_opts', model.opts), ('train_opts', train_opts)])
     print(opts_str)
@@ -572,8 +572,8 @@ def pretrain(model, train_opts):
 
 def pretrain_gan(model, train_opts):
     
-    if not train_opts.id.startswith('gan_'):
-        train_opts.id = 'gan_' + train_opts.id
+    if not train_opts.id.startswith('gan2_'):
+        train_opts.id = 'gan2_' + train_opts.id
     
     opts_str = opt_parser.opts_to_string([('model_opts', model.opts), ('train_opts', train_opts)])
     print(opts_str)
@@ -972,8 +972,8 @@ def pretrain_gan(model, train_opts):
 
 def train_gan(model, train_opts):
 
-    if not train_opts.id.startswith('gan_'):
-        train_opts.id = 'gan_' + train_opts.id
+    if not train_opts.id.startswith('gan2_'):
+        train_opts.id = 'gan2_' + train_opts.id
 
     opts_str = opt_parser.opts_to_string([('model_opts', model.opts), ('train_opts', train_opts)])
     print(opts_str)
@@ -1379,8 +1379,8 @@ def train_gan(model, train_opts):
 
 def finetune_fix_cnn(model, train_opts):
 
-    if not train_opts.id.startswith('gan_'):
-        train_opts.id = 'gan_' + train_opts.id
+    if not train_opts.id.startswith('gan2_'):
+        train_opts.id = 'gan2_' + train_opts.id
 
     opts_str = opts_str = opt_parser.opts_to_string([('model_opts', model.opts), ('train_opts', train_opts)])
     print(opts_str)
