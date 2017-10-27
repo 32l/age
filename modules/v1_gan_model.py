@@ -11,7 +11,6 @@ from util.pavi import PaviClient
 import dataset
 import misc
 import opt_parser_gan as opt_parser
-import resnet
 
 import os
 import sys
@@ -65,11 +64,17 @@ class GANModel(nn.Module):
         ## create model
         # cnn
         if opts.cnn == 'resnet18':
-            self.cnn = resnet.resnet18(pretrained = True) # modified from torchvision resnet
+            net = torchvision.models.resnet18(pretrained = True)
+            cnn_layers = net._modules
+            cnn_layers.popitem() # remove last fc layer
+            self.cnn = nn.Sequential(cnn_layers)
             self.cnn_feat_size = 512
 
         elif opts.cnn == 'resnet50':
-            self.cnn = resnet.resnet50(pretrained = True)
+            net = torchvision.models.resnet50(pretrained = True)
+            cnn_layers = net._modules
+            cnn_layers.popitem() # remove last fc layer
+            self.cnn = nn.Sequential(cnn_layers)
             self.cnn_feat_size = 2048
 
         elif opts.cnn == 'vgg16':
@@ -183,15 +188,8 @@ class GANModel(nn.Module):
 
 
     def _forward_age_cls(self, feat):
-        '''
-        Input:
-            feat: CNN feature (not ReLUed)
-        Output:
-            age_out: output age prediction (for evaluation)
-            age_fc: final fc layer output (for compute loss)
-            
-        '''
-        fc_out = self.age_cls(F.relu(feat))
+
+        fc_out = self.age_cls(feat)
 
         if self.opts.cls_type == 'dex':
             # Deep EXpectation
@@ -227,8 +225,8 @@ class GANModel(nn.Module):
 
         '''
 
-        _, feat = self.cnn(img) # this feature is not ReLUed
-        # feat = feat.view(feat.size(0), -1)
+        feat = self.cnn(img)
+        feat = feat.view(feat.size(0), -1)
 
         age_out, fc_out = self._forward_age_cls(feat)
 
@@ -289,12 +287,11 @@ class GANModel(nn.Module):
             noise = Variable(torch.FloatTensor(feat_exp.size(0), model.opts.noise_dim).normal_(0, 1)).cuda()
             feat_res = self.G_net(torch.cat((feat_exp, noise), dim = 1))
             
-            
         elif aug_mode == 'gaussian':
             # add gaussian noise to original feature
             feat_res = Variable(torch.FloatTensor(feat_exp.size()).normal_(0, aug_scale).cuda())
         
-        feat_exp = feat_exp + feat_res
+        feat_exp = F.relu(feat_exp + feat_res)
         age_exp, fc_exp = self._forward_age_cls(feat_exp)
         
         age_exp = age_exp.view(bsz, org_len*aug_rate)
@@ -313,6 +310,9 @@ class GANModel(nn.Module):
         return age_out, fc_out, feat
         
         
+
+
+
 def pretrain(model, train_opts):
 
     if not train_opts.id.startswith('gan_'):
