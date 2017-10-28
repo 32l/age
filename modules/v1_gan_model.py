@@ -11,6 +11,7 @@ from util.pavi import PaviClient
 import dataset
 import misc
 import v1_opt_parser_gan as opt_parser
+import resnet
 
 import os
 import sys
@@ -64,10 +65,11 @@ class GANModel(nn.Module):
         ## create model
         # cnn
         if opts.cnn == 'resnet18':
-            net = torchvision.models.resnet18(pretrained = True)
-            cnn_layers = net._modules
-            cnn_layers.popitem() # remove last fc layer
-            self.cnn = nn.Sequential(cnn_layers)
+            #net = torchvision.models.resnet18(pretrained = True)
+            #cnn_layers = net._modules
+            #cnn_layers.popitem() # remove last fc layer
+            #self.cnn = nn.Sequential(cnn_layers)
+            self.cnn = resnet.resnet18(pretrained = True)
             self.cnn_feat_size = 512
 
         elif opts.cnn == 'resnet50':
