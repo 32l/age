@@ -191,7 +191,8 @@ class GANModel(nn.Module):
             age_fc: final fc layer output (for compute loss)
             
         '''
-        fc_out = self.age_cls(feat)
+        #fc_out = self.age_cls(feat)
+        fc_out = self.age_cls(F.relu(feat))
 
         if self.opts.cls_type == 'dex':
             # Deep EXpectation
@@ -293,7 +294,7 @@ class GANModel(nn.Module):
             # add gaussian noise to original feature
             feat_res = Variable(torch.FloatTensor(feat_exp.size()).normal_(0, aug_scale).cuda())
         
-        feat_exp = feat_exp + feat_res
+        feat_exp = F.relu(feat_exp + feat_res)
         age_exp, fc_exp = self._forward_age_cls(feat_exp)
         
         age_exp = age_exp.view(bsz, org_len*aug_rate)

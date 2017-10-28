@@ -1,3 +1,6 @@
+### modified resnet class from torchvision.models.resnet
+
+
 import torch.nn as nn
 import math
 import torch.utils.model_zoo as model_zoo
@@ -25,7 +28,7 @@ def conv3x3(in_planes, out_planes, stride=1):
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, final_relu=True):
         super(BasicBlock, self).__init__()
         self.conv1 = conv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes)
@@ -34,6 +37,9 @@ class BasicBlock(nn.Module):
         self.bn2 = nn.BatchNorm2d(planes)
         self.downsample = downsample
         self.stride = stride
+        
+        ## if final_relu==False, output feature without relu
+        self.final_relu = final_relu
 
     def forward(self, x, *argv):
         residual = x
@@ -49,7 +55,9 @@ class BasicBlock(nn.Module):
             residual = self.downsample(x)
 
         out += residual
-        # out = self.relu(out)
+        
+        if self.final_relu:
+            out = self.relu(out)
 
         return out
 
@@ -57,7 +65,7 @@ class BasicBlock(nn.Module):
 class Bottleneck(nn.Module):
     expansion = 4
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
+    def __init__(self, inplanes, planes, stride=1, downsample=None, final_relu= True):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
@@ -69,6 +77,8 @@ class Bottleneck(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
+        ## if final_relu==False, output feature without relu
+        self.final_relu = final_relu
 
     def forward(self, x):
         residual = x
@@ -88,7 +98,9 @@ class Bottleneck(nn.Module):
             residual = self.downsample(x)
 
         out += residual
-        #out = self.relu(out)
+        
+        if self.final_relu:
+            out = self.relu(out)
 
         return out
 
@@ -130,8 +142,12 @@ class ResNet(nn.Module):
         layers = []
         layers.append(block(self.inplanes, planes, stride, downsample))
         self.inplanes = planes * block.expansion
+        
         for i in range(1, blocks):
             layers.append(block(self.inplanes, planes))
+        
+        # The last block will not ReLU its output feature
+        layers[-1].final_relu = False
 
         return nn.Sequential(*layers)
 
@@ -144,7 +160,7 @@ class ResNet(nn.Module):
         x = self.relu(self.layer1(x))
         x = self.relu(self.layer2(x))
         x = self.relu(self.layer3(x))
-        x = self.relu(self.layer4(x))
+        x = self.layer4(x)
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
