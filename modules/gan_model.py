@@ -227,7 +227,7 @@ class GANModel(nn.Module):
 
         '''
 
-        _, feat = self.cnn(img) # this feature is not ReLUed
+        feat = self.cnn(img) # this feature is not ReLUed
         # feat = feat.view(feat.size(0), -1)
 
         age_out, fc_out = self._forward_age_cls(feat)
@@ -336,7 +336,7 @@ def pretrain(model, train_opts):
 
     train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
         num_workers = 4, pin_memory = True)
-    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 128, 
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 16, 
         num_workers = 4, pin_memory = True)
 
 
