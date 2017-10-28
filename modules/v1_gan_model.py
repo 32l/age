@@ -10,7 +10,7 @@ import util.io as io
 from util.pavi import PaviClient
 import dataset
 import misc
-import opt_parser_gan as opt_parser
+import v1_opt_parser_gan as opt_parser
 
 import os
 import sys
@@ -336,7 +336,7 @@ def pretrain(model, train_opts):
 
     train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
         num_workers = 4, pin_memory = True)
-    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 128, 
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 32, 
         num_workers = 4, pin_memory = True)
 
 
