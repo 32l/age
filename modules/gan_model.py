@@ -335,7 +335,7 @@ def pretrain(model, train_opts):
 
     train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
         num_workers = 4, pin_memory = True)
-    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 32, 
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 16, 
         num_workers = 4, pin_memory = True)
 
 
