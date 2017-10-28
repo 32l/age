@@ -144,7 +144,7 @@ class ResNet(nn.Module):
         x = self.relu(self.layer1(x))
         x = self.relu(self.layer2(x))
         x = self.relu(self.layer3(x))
-        x = self.layer4(x)
+        x = self.relu(self.layer4(x))
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)

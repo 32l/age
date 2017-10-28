@@ -185,13 +185,13 @@ class GANModel(nn.Module):
     def _forward_age_cls(self, feat):
         '''
         Input:
-            feat: CNN feature (not ReLUed)
+            feat: CNN feature (ReLUed)
         Output:
             age_out: output age prediction (for evaluation)
             age_fc: final fc layer output (for compute loss)
             
         '''
-        fc_out = self.age_cls(F.relu(feat))
+        fc_out = self.age_cls(feat)
 
         if self.opts.cls_type == 'dex':
             # Deep EXpectation
@@ -227,8 +227,7 @@ class GANModel(nn.Module):
 
         '''
 
-        feat = self.cnn(img) # this feature is not ReLUed
-        # feat = feat.view(feat.size(0), -1)
+        feat = self.cnn(img) # this feature is ReLUed
 
         age_out, fc_out = self._forward_age_cls(feat)
 
@@ -325,7 +324,6 @@ def pretrain(model, train_opts):
     if torch.cuda.device_count() > 1:
         model.cnn = nn.DataParallel(model.cnn)
     model.cuda()
-
 
     ### load dataset
     train_dset = dataset.load_video_age_dataset(version = train_opts.dataset_version, subset = 'train',
@@ -1489,7 +1487,7 @@ def finetune_fix_cnn(model, train_opts):
             
             
             # forward and backward
-            # age_out, fc_out, _ = model.forward_video(img_seq, seq_len)
+            
             age_out, fc_out, feat = model.forward_video_with_feat_aug(img_seq, seq_len, train_opts)
             
             
@@ -1501,17 +1499,11 @@ def finetune_fix_cnn(model, train_opts):
 
             loss.backward()
             
-            grad = model.age_cls.fc0.weight.grad
-            p0 = model.age_cls.fc0.weight.clone()
-            
+                        
             # optimize
             optimizer.step()
             
-            p1 = model.age_cls.fc0.weight.clone()
-            pd = p1 - p0
-#print('w_norm: %.6f   w_diff: %.6f   grad_norm: %.6f' %
-#                (p0.norm().data[0], pd.norm().data[0], grad.norm().data[0]))
-
+            
             # display
             if batch_idx % train_opts.display_interval == 0:
                 loss_smooth = crit_age.smooth_loss()
@@ -1858,7 +1850,11 @@ if __name__ == '__main__':
                 model.load_model(fn, modules = ['cnn', 'age_cls'])
             train_gan(model, train_opts)
         elif retrain_opts.mode == 'finetune_fix':
-            model.load_model(fn)
+            if train_opts.load_age_cls == 1:
+                model.load_model(fn)
+            else：
+                model.load_model(fn, modules = ['cnn', 'G_net', 'D_net'])
+            
             finetune_fix_cnn(model, train_opts)
     
     
