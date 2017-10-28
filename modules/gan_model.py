@@ -334,7 +334,7 @@ def pretrain(model, train_opts):
 
     train_loader = torch.utils.data.DataLoader(train_dset, batch_size = train_opts.batch_size, shuffle = True, 
         num_workers = 4, pin_memory = True)
-    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 16, 
+    test_loader  = torch.utils.data.DataLoader(test_dset, batch_size = 32, 
         num_workers = 4, pin_memory = True)
 
 
@@ -1852,7 +1852,7 @@ if __name__ == '__main__':
         elif retrain_opts.mode == 'finetune_fix':
             if train_opts.load_age_cls == 1:
                 model.load_model(fn)
-            else：
+            else:
                 model.load_model(fn, modules = ['cnn', 'G_net', 'D_net'])
             
             finetune_fix_cnn(model, train_opts)
