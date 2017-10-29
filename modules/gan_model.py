@@ -41,8 +41,10 @@ class Generator(nn.Module):
         Create Generator.
         '''
         
+        super(Generator, self).__init__()
+        
         cnn_feat_map = {'resnet18': 512, 'resnet50': 2048, 'vgg16': 2048}
-        self.cnn_feat_size = cnn_feat_map[opts.cnn_type]
+        self.cnn_feat_size = cnn_feat_map[opts.cnn]
         self.noise_dim = opts.noise_dim
         
         hidden_lst = [self.cnn_feat_size + self.noise_dim] + opts.G_hidden + [self.cnn_feat_size]
@@ -51,7 +53,8 @@ class Generator(nn.Module):
             layers['fc%d' % n] = nn.Linear(dim_in, dim_out, bias = False)
             if n < len(hidden_lst) - 2:
                 layers['bn%d' % n] = nn.BatchNorm1d(dim_out)
-                layers['elu%d' % n] = nn.ELU()
+                layers['leaky_relu%d'%n] = nn.LeakyReLU(0.2)
+                #layers['elu%d' % n] = nn.ELU()
         
         self.net = nn.Sequential(layers)
     
@@ -74,12 +77,14 @@ class Discriminator(nn.Module):
         '''
         Bisic Discriminator without condition and classification
         '''
+        super(Discriminator, self).__init__()
+
         cnn_feat_map = {'resnet18': 512, 'resnet50': 2048, 'vgg16': 2048}
-        self.cnn_feat_size = cnn_feat_map[opts.cnn_type]
+        self.cnn_feat_size = cnn_feat_map[opts.cnn]
         
         hidden_lst = [self.cnn_feat_size] + opts.D_hidden + [1]
         layers = OrderedDict()
-        for n, (dim_in, dim_out) in enumerate(zip(hidden_lst, hidden_lst[1::]):
+        for n, (dim_in, dim_out) in enumerate(zip(hidden_lst, hidden_lst[1::])):
             layers['fc%d' % n] = nn.Linear(dim_in, dim_out, bias = False)
             if n < len(hidden_lst) - 2:
                 layers['bn%d' % n] = nn.BatchNorm1d(dim_out)
@@ -1305,7 +1310,7 @@ def train_gan(model, train_opts):
                 age_gt = torch.cat((age_gt, age_gt))
 
                 noise = Variable(torch.FloatTensor(bsz, model.opts.noise_dim).normal_(0, 1)).cuda()
-                feat_res = model.G_net(torch.cat((feat_in, noise), dim = 1))
+                feat_res = model.G_net(feat_in, noise)
                 feat_fake = F.relu(feat_in + feat_res)
 
                 # forward real

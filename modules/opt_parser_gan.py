@@ -176,7 +176,7 @@ def basic_train_opts_parser():
 
 
     # optimization
-    parser.add_argument('--max_epochs', type = int, default = 15,
+    parser.add_argument('--max_epochs', type = int, default = 30,
         help = 'number of training epochs')
 
     parser.add_argument('--batch_size', type = int, default = 32,
@@ -188,19 +188,19 @@ def basic_train_opts_parser():
     parser.add_argument('--lr', type = float, default = 1e-4,
         help = 'learning rate')
 
-    parser.add_argument('--lr_decay', type = int, default = 5,
+    parser.add_argument('--lr_decay', type = int, default = 20,
         help = 'every how many epochs does the learning rate decay')
 
     parser.add_argument('--lr_decay_rate', type = float, default = 0.1,
         help = 'learning decay rate')
 
-    parser.add_argument('--weight_decay', type = float, default = 5e-4,
+    parser.add_argument('--weight_decay', type = float, default = 0,
         help = 'L2 weight decay')
 
     parser.add_argument('--momentum', type = float, default = 0.9,
         help = 'momentum for SGD')
 
-    parser.add_argument('--optim_alpha', type = float, default = 0.9,
+    parser.add_argument('--optim_alpha', type = float, default = 0.5,
         help = 'alpha for adam')
 
     parser.add_argument('--optim_beta', type = float, default = 0.999,
@@ -244,7 +244,7 @@ def parse_opts_train_gan():
 
     parser = argparse.ArgumentParser(parents = [basic_train_opts_parser()])
 
-    parser.add_argument('--pre_id', type = str, default = 'gan_pre_1.4',
+    parser.add_argument('--pre_id', type = str, default = 'gan2_pre_1.6',
         help = 'ID of pretrained model on age datasets')
         
     parser.add_argument('--gan_pretrained', type = int, default = 0,
