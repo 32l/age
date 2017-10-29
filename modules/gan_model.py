@@ -20,6 +20,7 @@ from collections import OrderedDict
 import time
 
 
+
 def weights_init(m):
     classname = m.__class__.__name__
 
@@ -33,6 +34,65 @@ def weights_init(m):
         m.bias.data.fill_(0.0)
 
 
+        
+class Generator(nn.Module):
+    def __init__(self, opts):
+        '''
+        Create Generator.
+        '''
+        
+        cnn_feat_map = {'resnet18': 512, 'resnet50': 2048, 'vgg16': 2048}
+        self.cnn_feat_size = cnn_feat_map[opts.cnn_type]
+        self.noise_dim = opts.noise_dim
+        
+        hidden_lst = [self.cnn_feat_size + self.noise_dim] + opts.G_hidden + [self.cnn_feat_size]
+        layers = OrderedDict()
+        for n, (dim_in, dim_out) in enumerate(zip(hidden_lst, hidden_lst[1::])):
+            layers['fc%d' % n] = nn.Linear(dim_in, dim_out, bias = False)
+            if n < len(hidden_lst) - 2:
+                layers['bn%d' % n] = nn.BatchNorm1d(dim_out)
+                layers['elu%d' % n] = nn.ELU()
+        
+        self.net = nn.Sequential(layers)
+    
+    def forward(self, feat_in, noise):
+        '''
+        Input:
+            feat_in (bsz, cnn_feat_size): input feature (not ReLUed)
+            noise (bsz, noise_dim): input gaussian noise
+        Output:
+            feat_res (bsz, cnn_feat_size): generated feature residual
+            
+        '''
+        
+        x = torch.cat((feat_in, noise), dim = 1)
+        return self.net(x)
+        
+
+class Discriminator(nn.Module):
+    def __init__(self, opts):
+        '''
+        Bisic Discriminator without condition and classification
+        '''
+        cnn_feat_map = {'resnet18': 512, 'resnet50': 2048, 'vgg16': 2048}
+        self.cnn_feat_size = cnn_feat_map[opts.cnn_type]
+        
+        hidden_lst = [self.cnn_feat_size] + opts.D_hidden + [1]
+        layers = OrderedDict()
+        for n, (dim_in, dim_out) in enumerate(zip(hidden_lst, hidden_lst[1::]):
+            layers['fc%d' % n] = nn.Linear(dim_in, dim_out, bias = False)
+            if n < len(hidden_lst) - 2:
+                layers['bn%d' % n] = nn.BatchNorm1d(dim_out)
+                layers['leaky_relu%d' % n] = nn.LeakyReLU(0.2)
+        layers['sigmoid'] = nn.Sigmoid()
+        
+        self.net = nn.Sequential(layers)
+    
+    def forward(self, feat_in):
+        
+        return self.net(feat_in)
+
+        
 class GANModel(nn.Module):
 
     def _update_opts(self, opts):
@@ -106,33 +166,10 @@ class GANModel(nn.Module):
 
         # GAN
         # generator
-        g_hidden_lst = [self.cnn_feat_size + opts.noise_dim] + opts.G_hidden + [self.cnn_feat_size]
-        g_layers = OrderedDict()
-        for n, (dim_in, dim_out) in enumerate(zip(g_hidden_lst, g_hidden_lst[1::])):
-            g_layers['fc%d'%n] = nn.Linear(dim_in, dim_out, bias = False)
-            if n < len(g_hidden_lst) - 2:
-                g_layers['bn%d'%n] = nn.BatchNorm1d(dim_out)
-                # g_layers['leaky_relu%d'%n] = nn.LeakyReLU(0.2)
-                # g_layers['relu%d'%n] = nn.ReLU()
-                g_layers['elu%d'%n] = nn.ELU()
-        self.G_net = nn.Sequential(g_layers)
+        self.G_net = Generator(opts)
 
         # discriminator
-        if opts.D_mode == 'cond':
-            d_hidden_lst = [self.cnn_feat_size * 2] + opts.D_hidden +[1]
-        else:
-            d_hidden_lst = [self.cnn_feat_size] + opts.D_hidden +[1]
-
-        d_layers = OrderedDict()
-        # d_layers['relu'] = nn.ReLU()
-        for n, (dim_in, dim_out) in enumerate(zip(d_hidden_lst, d_hidden_lst[1::])):
-            d_layers['fc%d'%n] = nn.Linear(dim_in, dim_out, bias = False)
-            if n < len(d_hidden_lst) - 2:
-                if opts.D_bn == 1:
-                    d_layers['bn%d'%n] = nn.BatchNorm1d(dim_out)
-                d_layers['leaky_relu%d'%n] = nn.LeakyReLU(0.2)
-        d_layers['sigmoid'] = nn.Sigmoid()
-        self.D_net = nn.Sequential(d_layers)
+        self.D_net = Discriminator(opts)
         
         
         # init weight1
@@ -1097,7 +1134,7 @@ def train_gan(model, train_opts):
 
             # train with real
             if model.opts.D_mode == 'cond':
-                    out = model.D_net(torch.cat((feat_in, feat_real), dim = 1))
+                    out = model.D_net(feat_in, feat_real)
             else:
                 out = model.D_net(feat_real)
 
@@ -1112,11 +1149,11 @@ def train_gan(model, train_opts):
 
             # train with fake
             noise = Variable(torch.FloatTensor(bsz, model.opts.noise_dim).normal_(0, 1)).cuda()
-            feat_res = model.G_net(torch.cat((feat_in, noise), dim = 1))
-            feat_fake = F.relu(feat_in + feat_res)
+            feat_res = model.G_net(feat_in, noise)
+            feat_fake = feat_in + feat_res
 
             if model.opts.D_mode == 'cond':
-                out = model.D_net(torch.cat((feat_in, feat_fake.detach()), dim = 1))
+                out = model.D_net(feat_in, feat_fake.detach())
             else:
                 out = model.D_net(feat_fake.detach())
 
