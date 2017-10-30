@@ -12,6 +12,7 @@ import dataset
 import misc
 import opt_parser_gan as opt_parser
 import resnet
+import lib_gan
 
 import os
 import sys
@@ -33,69 +34,6 @@ def weights_init(m):
         m.weight.data.normal_(1.0, 0.02)
         m.bias.data.fill_(0.0)
 
-
-        
-class Generator(nn.Module):
-    def __init__(self, opts):
-        '''
-        Create Generator.
-        '''
-        
-        super(Generator, self).__init__()
-        
-        cnn_feat_map = {'resnet18': 512, 'resnet50': 2048, 'vgg16': 2048}
-        self.cnn_feat_size = cnn_feat_map[opts.cnn]
-        self.noise_dim = opts.noise_dim
-        
-        hidden_lst = [self.cnn_feat_size + self.noise_dim] + opts.G_hidden + [self.cnn_feat_size]
-        layers = OrderedDict()
-        for n, (dim_in, dim_out) in enumerate(zip(hidden_lst, hidden_lst[1::])):
-            layers['fc%d' % n] = nn.Linear(dim_in, dim_out, bias = False)
-            if n < len(hidden_lst) - 2:
-                layers['bn%d' % n] = nn.BatchNorm1d(dim_out)
-                layers['leaky_relu%d'%n] = nn.LeakyReLU(0.2)
-                #layers['elu%d' % n] = nn.ELU()
-        
-        self.net = nn.Sequential(layers)
-    
-    def forward(self, feat_in, noise):
-        '''
-        Input:
-            feat_in (bsz, cnn_feat_size): input feature (not ReLUed)
-            noise (bsz, noise_dim): input gaussian noise
-        Output:
-            feat_res (bsz, cnn_feat_size): generated feature residual
-            
-        '''
-        
-        x = torch.cat((feat_in, noise), dim = 1)
-        return self.net(x)
-        
-
-class Discriminator(nn.Module):
-    def __init__(self, opts):
-        '''
-        Bisic Discriminator without condition and classification
-        '''
-        super(Discriminator, self).__init__()
-
-        cnn_feat_map = {'resnet18': 512, 'resnet50': 2048, 'vgg16': 2048}
-        self.cnn_feat_size = cnn_feat_map[opts.cnn]
-        
-        hidden_lst = [self.cnn_feat_size] + opts.D_hidden + [1]
-        layers = OrderedDict()
-        for n, (dim_in, dim_out) in enumerate(zip(hidden_lst, hidden_lst[1::])):
-            layers['fc%d' % n] = nn.Linear(dim_in, dim_out, bias = False)
-            if n < len(hidden_lst) - 2:
-                layers['bn%d' % n] = nn.BatchNorm1d(dim_out)
-                layers['leaky_relu%d' % n] = nn.LeakyReLU(0.2)
-        layers['sigmoid'] = nn.Sigmoid()
-        
-        self.net = nn.Sequential(layers)
-    
-    def forward(self, feat_in):
-        
-        return self.net(feat_in)
 
         
 class GANModel(nn.Module):
@@ -171,11 +109,10 @@ class GANModel(nn.Module):
 
         # GAN
         # generator
-        self.G_net = Generator(opts)
+        self.G_net = lib_gan.Generator(opts)
 
         # discriminator
-        self.D_net = Discriminator(opts)
-        
+        self.D_net = lib_gan.Discriminator(opts)        
         
         # init weight1
         if fn:
@@ -1192,12 +1129,11 @@ def train_gan(model, train_opts):
             l2_diff = (feat_real - feat_in).norm(p = 2, dim = 1, keepdim = True)
             l2_threshold = Variable(torch.FloatTensor(l2_res.size()).fill_(l2_diff.max().data[0])).cuda()
 
-            loss_l2 = crit_L2(F.relu(l2_res - l2_threshold), None) * train_opts.G_l2_weight
+            loss_l2 = crit_L2(F.relu(l2_res - l2_threshold), None)
             
-
             _ = meas_D_F2(out, None)     
 
-            loss_g = loss_g + loss_l2
+            loss_g = loss_g + loss_l2  * train_opts.G_l2_weight
             loss_g.backward()
             optimizer_G.step()
 
