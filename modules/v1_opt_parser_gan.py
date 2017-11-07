@@ -89,6 +89,13 @@ def parse_opts_gan_model():
     parser.add_argument('--gan_dropout', type = float, default = 0.25,
         help = 'dropout rate for GAN model')
 
+    parser.add_argument('--G_nonlinear', type = str, default = 'elu',
+        choices = ['elu', 'lrelu'],
+        help = 'nonlinear layer type of G_net')
+
+    parser.add_argument('--input_relu', type = int, default = 0,
+        help = 'relu input feature')
+
 
     opts = parser.parse_known_args()[0]
 
@@ -176,7 +183,7 @@ def basic_train_opts_parser():
 
 
     # optimization
-    parser.add_argument('--max_epochs', type = int, default = 15,
+    parser.add_argument('--max_epochs', type = int, default = 30,
         help = 'number of training epochs')
 
     parser.add_argument('--batch_size', type = int, default = 32,
@@ -188,7 +195,7 @@ def basic_train_opts_parser():
     parser.add_argument('--lr', type = float, default = 1e-4,
         help = 'learning rate')
 
-    parser.add_argument('--lr_decay', type = int, default = 5,
+    parser.add_argument('--lr_decay', type = int, default = 20,
         help = 'every how many epochs does the learning rate decay')
 
     parser.add_argument('--lr_decay_rate', type = float, default = 0.1,
@@ -200,7 +207,7 @@ def basic_train_opts_parser():
     parser.add_argument('--momentum', type = float, default = 0.9,
         help = 'momentum for SGD')
 
-    parser.add_argument('--optim_alpha', type = float, default = 0.9,
+    parser.add_argument('--optim_alpha', type = float, default = 0.5,
         help = 'alpha for adam')
 
     parser.add_argument('--optim_beta', type = float, default = 0.999,

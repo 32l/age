@@ -26,21 +26,21 @@ def update_opts_from_dict(opts, opts_dict, exceptions = []):
             opts.__dict__[k] = v
     
     return opts
-    
-        
+
 
 def parse_command():
     parser = argparse.ArgumentParser()
 
     parser.add_argument('command', type = str, default = 'help',
-        choices = ['pretrain', 'train_gan', 'pretrain_gan', 'finetune_fix',
-        'retrain', 'show_feat'])
+        choices = ['pretrain', 'train', 'train_gan', 'pretrain_gan', 'finetune_fix',
+        'retrain', 'show_feat', 'extract_feat'])
 
     command = parser.parse_known_args()[0].command
 
     return command
 
-def parse_opts_gan_model():
+
+def parse_opts_gan_model(args = None, namespace = None):
     '''
     Parse argments for creating GANModel
     '''
@@ -58,7 +58,7 @@ def parse_opts_gan_model():
         help = 'max age')
 
     parser.add_argument('--age_fc_size', type = int, default = 128,
-        help = 'size of middle fc layer in age classifier')
+        help = '[Deprecated] size of middle fc layer in age classifier')
 
     parser.add_argument('--cls_type', type = str, default = 'oh', choices = ['oh', 'dex'],
         help = 'oh: ordinal hyperplane; dex: deep expectation')
@@ -69,28 +69,38 @@ def parse_opts_gan_model():
     parser.add_argument('--dropout', type = float, default = 0,
         help = 'dropout rate')
 
-    # generator
+    parser.add_argument('--age_cls_hidden', type = int, default = [128,128], nargs = '*',
+        help = 'dim of fc-layers in age_cls')
+
+    # GAN
     parser.add_argument('--noise_dim', type = int, default = 100,
         help = 'noise signal dimension')
 
     parser.add_argument('--G_hidden', type = int, default = [128, 32, 128], nargs = '*',
         help = 'latent space dimenssion of generator')
 
-    parser.add_argument('--D_hidden', type = int, default = [128], nargs = '*',
+    parser.add_argument('--G_nonlinear', type = str, default = 'elu',
+        choices = ['elu', 'lrelu'],
+        help = 'nonlinear layer type of G_net')
+
+    parser.add_argument('--input_relu', type = int, default = 0,
+        help = 'relu input feature')
+
+    parser.add_argument('--D_hidden2', type = int, default = [128], nargs = '*',
         help = 'latent space dimentions of discriminator')
 
-    parser.add_argument('--D_bn', type = int, default = 0, choices = [0, 1],
-        help = 'D_net contains BN layers')
+    parser.add_argument('--D_hidden', type = int, default = [], nargs = '*',
+        help = 'latent space dimentions of discriminator')
 
-    parser.add_argument('--D_mode', type = str, default = 'no_cond',
-        choices = ['cond', 'no_cond'],
-        help = 'cond: D takes feat_in as condition; no_cond: D only takes feat_fake')
+    parser.add_argument('--D_type', type = str, default = 'naive',
+        choices = ['naive', 'm', 'cm', 'd'],
+        help = 'naive: simple D; m: matching D; cm: cinditional matching D')
 
-    parser.add_argument('--gan_dropout', type = float, default = 0.25,
-        help = 'dropout rate for GAN model')
+    parser.add_argument('--decoder_id', type = str, default = 'dcd_3.2')
 
 
-    opts = parser.parse_known_args()[0]
+
+    opts = parser.parse_known_args(args = args, namespace = namespace)[0]
 
     return opts
 
@@ -107,6 +117,10 @@ def parse_opts_test():
     
     parser.add_argument('--gpu_id', type = int, default = [0], nargs = '*',
         help = 'GPU device id used for testing')
+
+    parser.add_argument('--batch_size', type = int, default = 128,
+        help = 'batch size')
+
     
     
     opts = parser.parse_known_args()[0]
@@ -194,7 +208,7 @@ def basic_train_opts_parser():
     parser.add_argument('--lr_decay_rate', type = float, default = 0.1,
         help = 'learning decay rate')
 
-    parser.add_argument('--weight_decay', type = float, default = 0,
+    parser.add_argument('--weight_decay', type = float, default = 0.0005,
         help = 'L2 weight decay')
 
     parser.add_argument('--momentum', type = float, default = 0.9,
@@ -218,8 +232,10 @@ def basic_train_opts_parser():
     parser.add_argument('--test_iter', type = int, default = -1,
         help = 'test iterations. -1 means useing all samples in test set')
 
-    parser.add_argument('--snapshot_interval', type = int, default = 10,
+    parser.add_argument('--snapshot_interval', type = int, default = -1,
         help = 'every how many epochs save model parameters to file')
+
+    parser.add_argument('--kl_loss_weight', type = float, default = 0.)
 
 
     return parser
@@ -234,6 +250,9 @@ def parse_opts_pretrain():
 
     parser.add_argument('--age_cls_lr_mult', type = float, default = 10.0,
         help = 'learning rate multiplier of age_cls module')
+
+    parser.add_argument('--age_cls_only', type = int, default = 0, choices = [0,1],
+        help = 'fix cnn parameters and only train age_cls')
 
 
     opts = parser.parse_known_args()[0]
@@ -259,48 +278,26 @@ def parse_opts_train_gan():
     parser.add_argument('--G_l2_weight', type = float, default = 0.0,
         help = 'L2-norm on generated feat_res')
 
-    # parser.add_argument('--D_pretrain_iter', type = int, default = 0,
-    #     help = 'D pretrain iterations')
+    parser.add_argument('--D_iter', type = int, default = 1,
+        help = 'number of D iterations every G iteration')
 
-    # parser.add_argument('--G_pretrain_iter', type = int, default = 0,
-    #     help = 'G pretrain iterations')
+    parser.add_argument('--real_label', type = float, default = 1.0,
+        help = 'value of real label')
 
     opts = parser.parse_known_args()[0]
 
     return opts
-    
-def parse_opts_pretrain_gan():
-    
-    parser = argparse.ArgumentParser(parents = [basic_train_opts_parser()])
-    
-    parser.add_argument('--pre_id', type = str, default = 'gan_pre_1.4',
-        help = 'ID of pretrained model on age datasets')
-    
-    parser.add_argument('--G_max_epochs', type = int, default = 10,
-        help = 'G pretrain epochs')
-    
-    parser.add_argument('--G_lr_decay', type = int, default = 5,
-        help = 'G learning rate decay')
-    
-    parser.add_argument('--D_max_epochs', type = int, default = 10,
-        help = 'D pretrain epochs')
-    
-    parser.add_argument('--D_lr_decay', type = int, default = 5,
-        help = 'D learning rate decay')
-    
-    opts = parser.parse_known_args()[0]
-    
-    return opts
+
 
 def parse_opts_finetune_fix_cnn():
     
     parser = argparse.ArgumentParser(parents = [basic_train_opts_parser()])
     
-    parser.add_argument('--pre_id', type = str, default = 'models/gan_5.1/final.pth',
+    parser.add_argument('--pre_id', type = str, default = 'models/gan2_2.0/final.pth',
         help = 'ID of pretrained model (both CNN and GAN should be trained)')
     
     parser.add_argument('--aug_mode', type = str, default = 'gan',
-        choices = ['gan', 'gaussian'],
+        choices = ['gan', 'gaussian', 'none'],
         help = 'augmentation method')
     
     parser.add_argument('--aug_scale', type = float, default = 1.,
@@ -312,11 +309,70 @@ def parse_opts_finetune_fix_cnn():
     parser.add_argument('--aug_pure', type = int, default = 0,
         help = 'using augmented data only')
 
-    parser.add_argument('--load_age_cls', type = int, default = 1,
+    parser.add_argument('--load_age_cls', type = int, default = 0,
         help = 'load age_cls from pretrained model or retrain it')
+
+    opts = parser.parse_known_args()[0]
+    
+    return opts
+
+def parse_opts_finetune_joint():
+    
+    parser = argparse.ArgumentParser(parents = [basic_train_opts_parser()])
+    
+    parser.add_argument('--pre_id', type = str, default = 'models/gan2_8.2/final.pth',
+        help = 'ID of pretrained model (both CNN and GAN should be trained)')
+
+    parser.add_argument('--aug_mode', type = str, default = 'gan',
+        choices = ['gan', 'gaussian', 'none'],
+        help = 'augmentation method')
+    
+    parser.add_argument('--aug_scale', type = float, default = 1.,
+        help = 'augmentation scale. for guassian noise, it is the std')
+    
+    parser.add_argument('--aug_rate', type = int, default = 5,
+        help = 'number of augmented samples for each real sample')
+    
+    parser.add_argument('--aug_pure', type = int, default = 0,
+        help = 'using augmented data only')
+
+    parser.add_argument('--load_age_cls', type = int, default = 0,
+        help = 'load age_cls from pretrained model or retrain it')
+
+
+
+    parser.add_argument('--cnn_mult', type = float, default = 0.1)
+    parser.add_argument('--age_cls_mult', type = float, default = 1.0)
+    parser.add_argument('--G_mult', type = float, default = 0.1)
+    parser.add_argument('--D_mult', type = float, default = 0.02)
 
     opts = parser.parse_known_args()[0]
     
     return opts
     
     
+def parse_opts_decoder(args = None, namespace = None):
+
+    parser = argparse.ArgumentParser()
+    
+
+    parser.add_argument('--block_type', type = str, default = 'dconv', 
+        choices = ['dconv', 'conv', 'pixel', 'mix'])
+
+    opts = parser.parse_known_args(args = args, namespace = namespace)[0]
+    return opts
+
+def parse_opts_train_decoder():
+
+    parser = argparse.ArgumentParser(parents = [basic_train_opts_parser()])
+
+    parser.add_argument('--cnn_id', type = str, default = 'gan2_pre_1.6',
+        help = 'ID of gan_model which provides CNN encoder')
+
+    parser.add_argument('--mid_loss_weight', type = float, default = 0.1,
+        help = 'loss weight of intermediate leverl feature map')
+
+    opts = parser.parse_known_args()[0]
+    
+    return opts
+

@@ -1,8 +1,12 @@
+import torch
 from torch.autograd import Variable
+import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 
 from collections import OrderedDict
+
+import decoder_model
 
 
 class Generator(nn.Module):
@@ -16,19 +20,25 @@ class Generator(nn.Module):
         cnn_feat_map = {'resnet18': 512, 'resnet50': 2048, 'vgg16': 2048}
         self.cnn_feat_size = cnn_feat_map[opts.cnn]
         self.noise_dim = opts.noise_dim
+
         
         hidden_lst = [self.cnn_feat_size + self.noise_dim] + opts.G_hidden + [self.cnn_feat_size]
         layers = OrderedDict()
+        if opts.input_relu== 1:
+            layers['relu'] = nn.ReLU()
         for n, (dim_in, dim_out) in enumerate(zip(hidden_lst, hidden_lst[1::])):
             layers['fc%d' % n] = nn.Linear(dim_in, dim_out, bias = False)
             if n < len(hidden_lst) - 2:
                 layers['bn%d' % n] = nn.BatchNorm1d(dim_out)
-                layers['leaky_relu%d'%n] = nn.LeakyReLU(0.2)
-                #layers['elu%d' % n] = nn.ELU()
+                if opts.G_nonlinear == 'elu':
+                    layers['elu%d' % n] = nn.ELU()
+                elif opts.G_nonlinear == 'lrelu':
+                    layers['leaky_relu%d'%n] = nn.LeakyReLU(0.2)
+                
         
         self.net = nn.Sequential(layers)
     
-    def forward(self, feat_in, noise):
+    def forward(self, feat_in, noise = None):
         '''
         Input:
             feat_in (bsz, cnn_feat_size): input feature (not ReLUed)
@@ -37,8 +47,11 @@ class Generator(nn.Module):
             feat_res (bsz, cnn_feat_size): generated feature residual
             
         '''
-        
-        x = torch.cat((feat_in, noise), dim = 1)
+        if noise is not None:
+            x = torch.cat((feat_in, noise), dim = 1)
+        else:
+            x = feat_in
+
         return self.net(x)
         
 
@@ -56,6 +69,9 @@ class Discriminator(nn.Module):
         
         hidden_lst = [self.cnn_feat_size] + opts.D_hidden + [1]
         layers = OrderedDict()
+        if opts.input_relu== 1:
+            layers['relu'] = nn.ReLU()
+
         for n, (dim_in, dim_out) in enumerate(zip(hidden_lst, hidden_lst[1::])):
             layers['fc%d' % n] = nn.Linear(dim_in, dim_out, bias = False)
             if n < len(hidden_lst) - 2:
@@ -65,9 +81,9 @@ class Discriminator(nn.Module):
         
         self.net = nn.Sequential(layers)
     
-    def forward(self, feat_in):
+    def forward(self, feat, backup = None):
         
-        return self.net(feat_in)
+        return self.net(feat)
 
         
 class M_Discriminator(nn.Module):
@@ -85,6 +101,9 @@ class M_Discriminator(nn.Module):
         # net1: parallel net
         hidden_lst1 = [self.cnn_feat_size] + opts.D_hidden
         layers1 = OrderedDict()
+        if opts.input_relu== 1:
+            layers1['relu'] = nn.ReLU()
+
         for n, (dim_in, dim_out) in enumerate(zip(hidden_lst1, hidden_lst1[1::])):
             layers1['fc%d' % n] = nn.Linear(dim_in, dim_out, bias = False)
             layers1['bn%d' % n] = nn.BatchNorm1d(dim_out)
@@ -108,10 +127,10 @@ class M_Discriminator(nn.Module):
         
         bsz, feat_size = feat_ref.size()
         
-        x = torch.cat((feat_ref, feat_tar), dim = 0)
-        x = self.net1(x)
+        x_ref = self.net1(feat_ref)
+        x_tar = self.net1(feat_tar)
         
-        y = torch.cat((x[0:bsz,:], x[bsz::,:]), dim = 1).contiguous()
+        y = torch.cat((x_ref, x_tar), dim = 1)
         
         return self.net2(y)
 
@@ -134,6 +153,8 @@ class CM_Discriminator(nn.Module):
         # net1: parallel net
         hidden_lst1 = [self.cnn_feat_size] + opts.D_hidden
         layers1 = OrderedDict()
+        if opts.input_relu== 1:
+            layers1['relu'] = nn.ReLU()
         for n, (dim_in, dim_out) in enumerate(zip(hidden_lst1, hidden_lst1[1::])):
             layers1['fc%d' % n] = nn.Linear(dim_in, dim_out, bias = False)
             layers1['bn%d' % n] = nn.BatchNorm1d(dim_out)
@@ -163,3 +184,45 @@ class CM_Discriminator(nn.Module):
         y = torch.cat((x[0:bsz,:], x[bsz::,:]), dim = 1).contiguous()
         
         return self.net2(y)
+
+
+class D_Discriminator(nn.Module):
+
+    def __init__(self, opts):
+        super(D_Discriminator, self).__init__()
+
+        self.decoder = decoder_model.DecoderModel(fn = 'models/%s/best.pth' % opts.decoder_id)
+
+        self.discriminator = nn.Sequential(
+            nn.Conv2d(6, 64, 4, 2, 1, bias = False),
+            nn.LeakyReLU(0.2),
+            nn.Conv2d(64, 128, 4, 2, 1, bias = False),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm2d(128),
+            nn.Conv2d(128, 256, 4, 2, 1, bias = False),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm2d(256),
+            nn.Conv2d(256, 512, 4, 2, 1, bias = False),
+            nn.LeakyReLU(0.2),
+            nn.BatchNorm2d(512),
+            nn.Conv2d(512, 1, 7, 1, 0, bias = False),
+            nn.Sigmoid()
+            )
+
+        
+
+    def train(self, mode = True):
+        self.decoder.eval()
+        self.discriminator.train(mode)
+
+    def forward(self, ref, tar):
+        bsz = ref.size(0)
+        x = torch.cat((ref,tar))
+        x,_ = nn.parallel.data_parallel(self.decoder, x)
+        x_ref, x_tar = x[0:bsz,:], x[bsz::,:]
+        x = torch.cat((x_ref, x_tar), dim = 1)
+
+        y = self.discriminator(x).contiguous().view(-1,1)
+
+        return y
+

@@ -1,7 +1,7 @@
 ### modified resnet class from torchvision.models.resnet
 
-
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 import torch.utils.model_zoo as model_zoo
 
@@ -151,7 +151,7 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward_to_end(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -165,8 +165,29 @@ class ResNet(nn.Module):
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         # x = self.fc(x)
-
         return x
+
+    def forward_multi_scale(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x1 = self.layer1(x)
+        x2 = self.layer2(F.relu(x1))
+        x3 = self.layer3(F.relu(x2))
+        x4 = self.layer4(F.relu(x3))
+
+        xp = self.avgpool(x4)
+        xp = xp.view(xp.size(0), -1)
+
+        return (x1, x2, x3, x4), xp
+
+    def forward(self, x, multi_scale = False):
+        if multi_scale:
+            return self.forward_multi_scale(x)
+        else:
+            return self.forward_to_end(x)
 
 
 def resnet18(pretrained=False, **kwargs):

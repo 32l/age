@@ -5,6 +5,7 @@ output/*
 temp*
 models/*
 demos/*
+exp_scripts
 scripts/st_SDK/*
 external/*
 !*.gitkeep
@@ -15,6 +16,7 @@ external/*
 *.pkl
 *.pth
 *.sublime*
+*.sh
 
 
 *.jpg

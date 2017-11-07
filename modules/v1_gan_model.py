@@ -11,6 +11,8 @@ from util.pavi import PaviClient
 import dataset
 import misc
 import v1_opt_parser_gan as opt_parser
+import resnet
+import lib_gan
 
 import os
 import sys
@@ -68,7 +70,9 @@ class GANModel(nn.Module):
             cnn_layers = net._modules
             cnn_layers.popitem() # remove last fc layer
             self.cnn = nn.Sequential(cnn_layers)
+            # self.cnn = resnet.resnet18(pretrained = True) # modified from torchvision resnet
             self.cnn_feat_size = 512
+
 
         elif opts.cnn == 'resnet50':
             net = torchvision.models.resnet50(pretrained = True)
@@ -122,6 +126,8 @@ class GANModel(nn.Module):
                 g_layers['elu%d'%n] = nn.ELU()
         self.G_net = nn.Sequential(g_layers)
 
+        # self.G_net = lib_gan.Generator(opts)
+
         # discriminator
         if opts.D_mode == 'cond':
             d_hidden_lst = [self.cnn_feat_size * 2] + opts.D_hidden +[1]
@@ -138,6 +144,8 @@ class GANModel(nn.Module):
                 d_layers['leaky_relu%d'%n] = nn.LeakyReLU(0.2)
         d_layers['sigmoid'] = nn.Sigmoid()
         self.D_net = nn.Sequential(d_layers)
+
+        # self.D_net = lib_gan.Discriminator(opts)
         
         
         # init weight1
@@ -1098,7 +1106,7 @@ def train_gan(model, train_opts):
 
             # train with real
             if model.opts.D_mode == 'cond':
-                    out = model.D_net(torch.cat((feat_in, feat_real), dim = 1))
+                out = model.D_net(torch.cat((feat_in, feat_real), dim = 1))
             else:
                 out = model.D_net(feat_real)
 

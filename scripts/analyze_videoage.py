@@ -1,6 +1,9 @@
 
 from __future__ import print_function, division
 
+import torch
+from torch.autograd import Variable
+
 import modules.joint_model as joint_model
 import sys
 import os
@@ -365,16 +368,158 @@ def feat_analyze(model_id):
         fig.savefig(output_fn)
 
 
+def feat_diff_analyze(model_id):
+
+    import matplotlib.pyplot as plt
+    from sklearn.decomposition import PCA
+    # from tsne import bh_sne
+
+    output_dir = os.path.join('models', model_id, 'cnn_feat')
+
+    pca = None
+    for name in ['train', 'test']:
+        rst = io.load_data(os.path.join(output_dir, name + '.pkl'))
+        feat = rst['feat']
+        age = rst['age']
+
+        # fd: feature diff
+        feat_1, feat_2 = feat[:,0,:], feat[:,1,:]
+        fd = feat_1 - feat_2
+
+        # ad: age diff
+        ad = age[:,0] - age[:,1]
+        
+        ad_norm = (ad / ad.mean() * 128).astype(np.int)
+        ad_norm[ad_norm>255] = 255
+
+        ### feat_diff distribution
+        # pca
+        if pca is None:
+            pca = PCA(n_components = 2)
+            pca.fit(feat_1)
+        fd_pca = pca.transform(fd)
+
+        plt.figure()
+        plt.scatter(fd_pca[:,0], fd_pca[:,1], c = ad_norm, cmap = plt.get_cmap('plasma'),s = 2)
+        plt.savefig(os.path.join(output_dir, '%s-featDiff-ageDiff-pca.jpg' % name))
+
+        # # tsne
+        # feat_tsne = bh_sne(np.concatenate((feat_1, feat_2), axis = 0).astype(np.float64))
+        # N = feat_1.shape[0]
+        # fd_tsne = feat_tsne[0:N] - feat_tsne[N::]
+
+        # plt.figure()
+        # plt.scatter(fd_tsne[:,0], fd_tsne[:,1], c = ad_norm, cmap = plt.get_cmap('plasma'), s = 2)
+        # plt.savefig(os.path.join(output_dir, 'featDiff-ageDiff-tsne.jpg'))
 
 
+def feat_res_analyze(model_id):
+    import matplotlib.pyplot as plt
+    from sklearn.decomposition import PCA
 
+    import modules.gan_model as gan
 
+    # use noise
+    res_noise = False
 
+    # load model
+    model = gan.GANModel(fn = os.path.join('models', model_id, 'final.pth'))
+    model.cuda()
+    model.eval()
 
+    # load cnn feature
+    output_dir = os.path.join('models', model_id, 'show_feat')
+    io.mkdir_if_missing(output_dir)
 
+    rsts = {}
+    for name in ['train', 'test']:
+        rsts[name] = io.load_data('models/gan2_pre_1.6/cnn_feat/%s.pkl' % name)
+
+    pca = PCA(n_components = 2)
+    pca.fit(rsts['train']['feat'][:,0,:])
+
+    for name in ['train', 'test']:
+
+        feat = rsts[name]['feat']
+        age = rsts[name]['age']
+
+        feat_1, feat_2 = feat[:,0,:], feat[:,1,:]
+        fd = feat_1 - feat_2
+
+        # compute G_net output
+        bsz = 128
+        N = feat.shape[0]
+
+        if res_noise:
+            mean = fd.mean(axis = 0, keepdims = True)
+            std = fd.std(axis = 0, keepdims = True)
+            fr = np.random.randn(*fd.shape) * std + mean
+
+        else:
+            fr = []
+            for s in xrange(0,N,bsz):
+                feat_in = feat_1[s:(s+bsz), :]
+                feat_in = Variable(torch.FloatTensor(feat_in), volatile = True).cuda()
+                noise = Variable(torch.FloatTensor(feat_in.size(0), model.opts.noise_dim).normal_(0, 1)).cuda()
+                feat_res = model.G_net(feat_in, noise)
+
+                fr.append(feat_res.data.cpu())
+                print('compute feat res [%d / %d]' % (s, N))
+
+            fr = torch.cat(fr, dim = 0).numpy()
+
+        # compute PCA
+        fd_pca = pca.transform(fd)
+        fr_pca = pca.transform(fr)
+
+        P = np.concatenate((fd_pca, fr_pca), axis = 0)
+        C = ['g'] * N + ['r'] * N
+
+        plt.figure()
+        plt.scatter(P[:,0], P[:,1], c = C,s = 2)
+        
+        if res_noise:
+            plt.savefig(os.path.join(output_dir, 'featResNoise-pca-%s.jpg'%name))
+        else:
+            plt.savefig(os.path.join(output_dir, 'featRes-pca-%s.jpg'%name))
 
 
 if __name__ == '__main__':
 
     # corr_analyze(*sys.argv[1::])
-    feat_analyze(*sys.argv[1::])
+    # feat_analyze(*sys.argv[1::])
+    # feat_diff_analyze(*sys.argv[1::])
+    # feat_res_analyze(*sys.argv[1::])
+
+
+    ## show feat res using PCA
+    import shutil
+    # model_lst = ['7.%d' % i for i in range(6)] + \
+    #             ['6.%d' % i for i in range(13)] + \
+    #             ['5.%d' % i for i in range(12)] + \
+    #             ['4.%d' % i for i in range(8)] + \
+    #             ['3.%d' % i for i in range(16)] + \
+    #             ['2.%d' % i for i in range(16)] + \
+    #             ['6.9.%d' % i for i in range(1,5)] + \
+    #             ['6.12.%d' % i for i in range(1,5)]
+
+    # model_lst = ['6.13.%d' % i for i in range(5)] +\
+    #             ['6.14.%d' % i for i in range(5)] + ['6.13', '6.14']
+
+
+    for s in model_lst:
+        try:
+            model_id = 'gan2_%s' % s
+
+            
+            feat_res_analyze(model_id)
+            for name in ['train', 'test']:
+                src_file = 'models/%s/show_feat/featRes-pca-%s.jpg' % (model_id, name)
+                dst_file = 'output/feat_res/%s_featRes-pca-%s.jpg' % (model_id, name)
+                shutil.copyfile(src_file, dst_file)
+            print(model_id)
+
+        except:
+            pass
+
+

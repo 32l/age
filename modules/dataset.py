@@ -115,15 +115,20 @@ def load_video_age_dataset(version = '2.0', subset = 'test', split = '', crop_si
     if subset == 'train':
         if split != '':
             subset = 'train_' + split
-        flip = True
+    
+    if 'flip' in argv:
+        flip = argv.pop('flip')
     else:
-        flip = False
+        if subset == 'train':
+            flip = True
+        else:
+            flip = False
+
             
     transform = StandardFaceTransform(flip = False, crop_size = crop_size)
 
     return Video_Age_Dataset(subset = subset, age_fn = age_fn, video_fn = video_fn, 
         split_fn = split_fn, transform = transform, flip = flip, **argv)
-
 
 
 def load_pose_dataset(dset_name, subset = 'train', alignment = 'none', crop_size = 128, debug = 0):
@@ -419,21 +424,49 @@ class Video_Age_Dataset(data.Dataset):
         if self.age_rng:
             self.id_lst = [s_id for s_id in self.id_lst if self.age_rng[0] <= va_age[s_id]['age'] <= self.age_rng[1]]
 
-        self.age_lst = [va_age[s_id] for s_id in self.id_lst]
-        self.video_lst = [va_video[s_id] for s_id in self.id_lst]
+        # create video index
+        if self.mode == 'video':
+            self.age_lst = [va_age[s_id] for s_id in self.id_lst]
+            self.video_lst = [va_video[s_id] for s_id in self.id_lst]
 
-        self.len = len(self.id_lst)
+        # create frame index
+        if self.mode == 'image':
+            self.img_id_lst = []
+            self.img_age_lst = []
+            self.img_lst = []
+
+            for s_id in self.id_lst:
+                v = va_video[s_id]
+                a = va_age[s_id]
+
+                for t, f in enumerate(v['frames']):
+                    self.img_id_lst.append('%s_%d' % (s_id, t))
+                    self.img_age_lst.append(a)
+                    self.img_lst.append(f)
+
+
         print('[Video_Age_Dataset]\nsubset: %s\nsample: %d\nmode: %s\nflip: %s\nage range: %s\nsplit_fn: %s\nage_fn: %s\nvideo_fn: %s\n' %\
-            (subset, self.len, self.mode, self.flip, self.age_rng, split_fn, age_fn, video_fn))
+            (subset, len(self), self.mode, self.flip, self.age_rng, split_fn, age_fn, video_fn))
 
 
     def __len__(self):
-        return 1 if self.debug == 1 else self.len
+        if self.debug == 1:
+            return 1
+        else:
+            if self.mode == 'video':
+                return len(self.id_lst)
+            elif self.mode == 'image':
+                return len(self.img_id_lst)
+
+
+
 
     def __getitem__(self, index):
         '''
         output data format:
-            img_seq: Tensor (max_T, c, w, h)
+            img_seq: 
+                video mode: Tensor (max_T, c, w, h)
+                image mode: Tensor (c, w, h)
             age: float value
             std: float value
             seq_len: int value
@@ -444,26 +477,37 @@ class Video_Age_Dataset(data.Dataset):
         
         flip = self.flip and np.random.rand() > 0.5
 
-        age = self.age_lst[index]['age']
-        std = self.age_lst[index]['std']
-        seq_len = min(self.max_len, len(self.video_lst[index]['frames']))
+        if self.mode == 'video':
 
-        img_seq = []
-        for f in self.video_lst[index]['frames'][0:seq_len]:
-            img = Image.open(f['image']).convert('RGB')
+            age = self.age_lst[index]['age']
+            std = self.age_lst[index]['std']
+            video = self.video_lst[index]
+            seq_len = min(self.max_len, len(video['frames']))
+
+            img_seq = []
+            for t in range(0, self.max_len):
+                t = t % len(video['frames'])
+                img = Image.open(video['frames'][t]['image']).convert('RGB')
+                if flip:
+                    img = img.transpose(Image.FLIP_LEFT_RIGHT)
+
+                # if t >= seq_len:
+                #     img.fill_(0)
+
+                img_seq.append(self.transform(img))
+
+            img_seq = torch.stack(img_seq)
+            
+            return img_seq, seq_len, age, std
+
+        elif self.mode == 'image':
+
+            age = self.img_age_lst[index]['age']
+            std = self.img_age_lst[index]['std']
+            img = Image.open(self.img_lst[index]['image']).convert('RGB')
             if flip:
                 img = img.transpose(Image.FLIP_LEFT_RIGHT)
-            
             img = self.transform(img)
-            img_seq.append(img)
 
-        img_seq = torch.stack(img_seq)
-
-        if img_seq.size(0) < self.max_len:
-            pad_sz = list(img_seq.size())
-            pad_sz[0] = long(self.max_len - img_seq.size(0))
-
-            img_seq = torch.cat((img_seq, torch.zeros(pad_sz)))
-        
-        return img_seq, seq_len, age, std
+            return img, age, std
 
